@@ -43,11 +43,13 @@ class SnowSurface {
     const max = snow.reduce((v, row) => row.reduce((m, n) => Math.max(m, n ?? 0), v), 0);
     const light = new THREE.Color('#edf6fa'), deep = new THREE.Color('#85bfe8');
     const terrain = Boolean(this.map.getTerrain());
+    let retreats = false;
     for (let j = 0; j < ys.length; j++) {
       for (let i = 0; i < xs.length; i++) {
         const value = snow[j][i];
         const before = morph ? previous.snow_cm[j][i] : value;
         if (ground[j][i] == null || Math.max(value ?? 0, before ?? 0) <= .01) continue;
+        if (morph && (value ?? 0) <= .01) retreats = true;
         const coords = [xs[i], ys[j]];
         const base = terrain ? ground[j][i] : 0;
         const p = maplibregl.MercatorCoordinate.fromLngLat(coords, base + Math.max(.06, (before ?? 0)*.01*scale));
@@ -97,6 +99,7 @@ class SnowSurface {
         this.mesh.morphTargetInfluences[0] = mix*mix*(3-2*mix);
         this.map.triggerRepaint();
         if (mix < 1) this.animation = requestAnimationFrame(animate);
+        else if (retreats) this.setData(data, scale, opacity);
       };
       this.animation = requestAnimationFrame(animate);
     }

@@ -119,8 +119,10 @@ export function createOperations(view, health) {
     if (!options.length) return;
     slider.max = options.length-1;
     slider.value = index;
+    slider.disabled = options.length <= 1;
     $('timeline-title').textContent = resultFrames ? 'Накопление снега и ветер' : 'Шкала погоды';
     const label = i => options[i] ? time(options[i]) : `Шаг ${i+1}`;
+    slider.setAttribute('aria-valuetext', label(index));
     $('timeline-current').textContent = label(index);
     $('timeline-start').textContent = label(0);
     $('timeline-end').textContent = label(options.length-1);
@@ -147,7 +149,9 @@ export function createOperations(view, health) {
     for (const button of document.querySelectorAll('[data-model]')) {
       button.setAttribute('aria-pressed', String(button.dataset.model === choice));
     }
-    const image = calculated?.overlays[choice];
+    const temporal = calculated?.timeline?.length > 0 && modelFrame < calculated.timeline.length;
+    const finalOnly = temporal && choice !== 'snow_cm' && calculated.overlays[choice];
+    const image = finalOnly ? undefined : calculated?.overlays[choice];
     const visible = Boolean(image);
     const volumeVisible = visible && choice === 'snow_cm' && $('snow-volume').checked;
     $('weather-menu-model').hidden = !calculated;
@@ -155,7 +159,6 @@ export function createOperations(view, health) {
       button.setAttribute('aria-pressed', String(choice === 'snow_cm' && (button.dataset.snowView === 'volume') === volumeVisible));
     }
     const rankKey = ['snow_cm', 'drift_cm'].includes(choice) ? 'combined' : choice === 'opposite_snow_cm' ? 'opposite' : choice;
-    const temporal = calculated?.timeline?.length > 0 && modelFrame < calculated.timeline.length;
     const rank = visible && !temporal ? calculated.ranking[rankKey] || [] : [];
     const markers = calculated?.weather_alerts?.map(alert => point(alert.coordinates, {
       status: alert.extrapolated ? 'extrapolated' : 'inspect'
@@ -165,7 +168,7 @@ export function createOperations(view, health) {
     const highlighted = active() && !calculated && scope.value === 'district' && source.value === 'archive'
       ? network?.features.filter(f => flagged.has(f.properties.district_id)) : [];
     map.getSource('operations-roads').setData({ ...empty(), features: highlighted || [] });
-    map.getSource('operations-points').setData({ ...empty(), features: choice.startsWith('weather_') ? markers : ranked });
+    map.getSource('operations-points').setData({ ...empty(), features: visible && choice.startsWith('weather_') ? markers : ranked });
     map.setLayoutProperty('operations-snow', 'visibility', visible && !volumeVisible ? 'visible' : 'none');
     volume.show(volumeVisible ? calculated.run_id : null, temporal ? modelFrame : undefined);
     $('snow-height-row').hidden = !volumeVisible;
@@ -184,7 +187,9 @@ export function createOperations(view, health) {
       $('ops-scale-end').textContent = unit ? `${maximum}${capped} ${unit}` : '1';
     }
     weather.legend();
-    $('ops-roads-label').textContent = temporal
+    $('ops-roads-label').textContent = finalOnly
+      ? 'Выбранный слой доступен на конец интервала.'
+      : temporal
       ? 'Рейтинг дорог рассчитан на конец интервала.'
       : rank.length && choice !== 'uniform' ? 'Сегменты с наибольшим индексом на конец интервала.'
         : 'Для этого слоя список приоритетов не построен.';
@@ -301,7 +306,6 @@ export function createOperations(view, health) {
   function setFrame(index) {
     if (calculated?.timeline?.length) {
       modelFrame = index;
-      layer.value = 'snow_cm';
       weather.setFrame(index);
       if (atlasDataset()) {
         if (source.value === 'historic') term.value = calculated.wind_frames[index].valid_at;
@@ -312,13 +316,14 @@ export function createOperations(view, health) {
       paint();
       return;
     }
-    if (index >= 0 && index < term.options.length) {
+    if (index >= 0 && index < term.options.length && index !== term.selectedIndex) {
       term.selectedIndex = index;
-      resetSnow();
+      if (calculated || busy) resetSnow();
       selectWeather();
     }
   }
 
+  slider.addEventListener('pointerdown', pause);
   slider.addEventListener('input', () => { pause(); setFrame(slider.valueAsNumber); });
   play.addEventListener('click', () => {
     if (player) { pause(); return; }
@@ -361,17 +366,7 @@ export function createOperations(view, health) {
     layer.value = button.dataset.model;
     layer.dispatchEvent(new Event('change'));
   });
-  layer.addEventListener('change', () => {
-    if (layer.value !== 'snow_cm' && calculated?.timeline?.length) {
-      pause();
-      modelFrame = calculated.wind_frames.length-1;
-      weather.setFrame(modelFrame);
-      if (atlasDataset()) weather.setWeather(atlasDataset(), calculated.wind_frames[modelFrame].valid_at,
-        source.value === 'historic' ? stormId() : undefined, calculated.source.atlas_sha256);
-      updateTimeline();
-    }
-    paint();
-  });
+  layer.addEventListener('change', paint);
   $('snow-volume').addEventListener('change', () => {
     if ($('snow-volume').checked) layer.value = 'snow_cm';
     paint();
@@ -570,15 +565,19 @@ export function createOperations(view, health) {
   return {
     async snowDetails(where, nearby) {
       if (!calculated) return [];
-      const frame = layer.value === 'snow_cm' ? modelFrame : undefined;
+      const { run_id, timeline } = calculated;
+      const frame = modelFrame;
+      const choice = layer.value;
       const query = new URLSearchParams({ lon: where.lng, lat: where.lat });
       if (nearby) query.set('nearby_m', 22);
       if (Number.isInteger(frame)) query.set('frame', frame);
       try {
-        const row = await request(`/operations/city/runs/${calculated.run_id}/sample?${query}`);
+        const row = await request(`/operations/city/runs/${run_id}/sample?${query}`);
+        if (calculated?.run_id !== run_id || modelFrame !== frame) return [];
         if (row.snow_cm == null) return ['В этой точке нет ячейки расчёта снега.'];
         return [
-          `Свежий снег по модели · ${format(layer.value === 'opposite_snow_cm' ? row.opposite_snow_cm ?? row.snow_cm : row.snow_cm)} см`,
+          `Свежий снег по модели · ${format(choice === 'opposite_snow_cm' && frame >= timeline.length
+            ? row.opposite_snow_cm ?? row.snow_cm : row.snow_cm)} см`,
           row.weather_snow_cm == null ? null : `Снегопад на входе · ${format(row.weather_snow_cm)} см`,
           row.weather_snow_cm == null ? null : `К фону · ${row.snow_cm > row.weather_snow_cm ? '+' : ''}${format(row.snow_cm-row.weather_snow_cm)} см`,
           row.sample_distance_m ? `Ближайшая открытая ячейка · ${row.sample_distance_m} м от точки` : null,
