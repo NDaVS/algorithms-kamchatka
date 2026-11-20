@@ -130,3 +130,22 @@ a.button { text-decoration: none; text-align: center; }
 .popup-details a { color: #c3efa8; }
 
 .swatch.candidates { border: 1px dashed #8de4ff; }
+
+.operations > select { margin: 5px 0 9px; }
+.operations label, .operations summary { color: #c4d5cd; font-size: 12px; }
+.operations summary { cursor: pointer; padding: 5px 0; }
+.operations hr { border: 0; border-top: 1px solid var(--line); margin: 17px 0; }
+.operations form { margin-bottom: 8px; }
+.operations details { margin: 8px 0; }
+.ops-values { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 8px 0; }
+.ops-values p { margin: 5px 0; }
+.signal-card { color: #c4dbc8; background: #20352a; border: 1px solid #354f40; padding: 8px; border-radius: 5px; font-size: 12px; }
+.signal-card[data-state=inspect] { color: #ffe2ad; background: #3d3021; border-color: #655039; }
+.signal-card[data-state=missing] { color: #c1c9cc; background: #2b3337; }
+#ops-manual { display: grid; gap: 10px; }
+#ops-layer { margin-top: 5px; }
+.ops-scale { display: grid; grid-template-columns: 1fr 1fr; margin: 8px 0; font-size: 11px; color: var(--muted); }
+.ops-scale i { grid-column: 1 / -1; height: 5px; background: linear-gradient(90deg,#26475e,#4f94bb,#ffd384,#f2694d); }
+.ops-scale span:last-child { text-align: right; }
+#ops-roads { padding-left: 24px; font-size: 11px; color: var(--muted); }
+#ops-roads button { padding: 4px 7px; margin: 2px 0; color: inherit; }

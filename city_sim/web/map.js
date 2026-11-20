@@ -64,7 +64,7 @@ function popup(map, coordinates, title, lines, sources = []) {
   new maplibregl.Popup({ maxWidth: '290px' }).setLngLat(coordinates).setDOMContent(content).addTo(map);
 }
 
-function installInteraction(map, buildingEvidence) {
+function installInteraction(map, buildingEvidence, buildingDetails) {
   map.on('click', async event => {
     const first = map.queryRenderedFeatures(event.point, { layers: ['structures', 'facilities', 'network', 'grades', 'topo-check', 'candidate-outline', 'streets', 'arterials'] })[0];
     const props = first?.properties;
@@ -101,7 +101,8 @@ function installInteraction(map, buildingEvidence) {
         const url = buildingEvidence.location_check?.url;
         if (url) sources.push(['GlobalBuildingAtlas', url]);
       }
-      popup(map, where, props.name || props.address || 'Здание', [...lines, props.asset_id], sources);
+      popup(map, where, props.name || props.address || 'Здание',
+        [...lines, ...buildingDetails(props.asset_id), props.asset_id], sources);
     } else if (first?.layer.id === 'facilities') {
       popup(map, where, props.name || ASSET_NAMES[props.kind] || 'Объект инфраструктуры',
         [ASSET_NAMES[props.kind] || props.kind, props.object_id]);
@@ -194,7 +195,7 @@ function installDataLoading(map, metadata) {
   return load;
 }
 
-export function createMap(metadata, onAreaChange) {
+export function createMap(metadata, onAreaChange, buildingDetails) {
   const { bbox } = metadata;
   const [first] = areas;
   const map = new maplibregl.Map({
@@ -282,6 +283,12 @@ export function createMap(metadata, onAreaChange) {
     for (const id of ['buildings', 'roads', 'assets', 'scenario-boundary', 'audit', 'candidates']) {
       map.addSource(id, { type: 'geojson', data: empty() });
     }
+    map.addSource('operations-snow', { type: 'image',
+      url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+      coordinates: [[158.60, 53.04], [158.64, 53.04], [158.64, 53.02], [158.60, 53.02]] });
+    map.addLayer({ id: 'operations-snow', type: 'raster', source: 'operations-snow',
+      layout: { visibility: 'none' }, paint: { 'raster-opacity': .82, 'raster-fade-duration': 0,
+        'raster-resampling': 'nearest' } });
     map.addLayer({ id: 'network', type: 'line', source: 'roads', layout: { 'line-cap': 'round' },
       paint: { 'line-color': ['match', ['get', 'road_class'],
         ['primary', 'secondary', 'tertiary'], '#fce1a0', '#dbccaa'],
@@ -305,6 +312,15 @@ export function createMap(metadata, onAreaChange) {
       paint: { 'line-color': '#cdf69a', 'line-width': 2, 'line-dasharray': [3, 3] } });
     map.addLayer({ id: 'topo-check', type: 'circle', source: 'audit', layout: { visibility: 'none' },
       paint: { 'circle-color': '#d8afff', 'circle-radius': 6, 'circle-stroke-width': 2, 'circle-stroke-color': '#2d1846' } });
+    map.addSource('operations-roads', { type: 'geojson', data: empty() });
+    map.addLayer({ id: 'operations-roads', type: 'line', source: 'operations-roads',
+      paint: { 'line-color': '#ffbd73', 'line-width': 2.5, 'line-opacity': .81 } }, 'network');
+    map.addSource('operations-points', { type: 'geojson', data: empty() });
+    map.addLayer({ id: 'operations-points', type: 'circle', source: 'operations-points',
+      paint: { 'circle-color': ['match', ['get', 'status'], 'inspect', '#ffca80',
+        'missing', '#9eabb0', 'priority', '#fff3c4', '#a8d8b2'],
+        'circle-radius': ['match', ['get', 'status'], 'priority', 4, 7],
+        'circle-stroke-color': '#14241b', 'circle-stroke-width': 1.5 } });
     for (const [name, coordinates, kind, minZoom] of LABELS) {
       const label = document.createElement('div');
       label.textContent = name;
@@ -331,7 +347,7 @@ export function createMap(metadata, onAreaChange) {
       map.setTerrain($('terrain').checked ? { source: 'dem', exaggeration: 1 } : null);
       map.setLayoutProperty('hillshade', 'visibility', $('terrain').checked ? 'visible' : 'none');
     });
-    installInteraction(map, metadata.building_evidence ?? {});
+    installInteraction(map, metadata.building_evidence ?? {}, buildingDetails);
     refresh().finally(resolve);
   }));
   map.on('error', event => {

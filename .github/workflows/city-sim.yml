@@ -31,11 +31,20 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-city-sim.txt
       - run: python -m pip install -r requirements-city-sim.txt
+      - name: Check out the pinned snow solver
+        run: |
+          mkdir -p city_sim/.state/danil
+          git -C city_sim/.state/danil init
+          git -C city_sim/.state/danil fetch --depth=1 https://github.com/NDaVS/kamcha-snow-sim.git 367282af2b5e728f6cdd94c148065c4cec892cfd
+          git -C city_sim/.state/danil checkout --detach FETCH_HEAD
       - run: python -m unittest discover -s city_sim/tests -v
       - run: docker compose -f compose.city-sim.yml up --build --detach --wait
       - run: |
           test "$(docker compose -f compose.city-sim.yml ps --services --status running | sort | paste -sd ' ' -)" = "city-api city-web"
           curl -fsS -o /dev/null http://127.0.0.1:8008/openapi.json
+          curl -fsS -o /dev/null http://127.0.0.1:8008/api/v1/operations/weather
+          curl -fsS -H 'Content-Type: application/json' -d '{"resolution": 64}' http://127.0.0.1:8008/api/v1/operations/snow -o "$RUNNER_TEMP/snow-study.json"
+          python -c 'import json,sys; m=json.load(open(sys.argv[1])); assert m["directional_control"]["passes"] and m["metrics"]["calm_flat_pass"]' "$RUNNER_TEMP/snow-study.json"
           curl -fsS -o /dev/null http://127.0.0.1:8008/api/v1/city/metadata
           curl -fsS -o /dev/null http://127.0.0.1:8008/static/vendor/maplibre-gl.js
           curl -fsS -o /dev/null http://127.0.0.1:8008/static/vendor/three.module.min.js

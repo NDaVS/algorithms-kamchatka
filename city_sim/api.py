@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from functools import partial
+from functools import lru_cache, partial
 import logging
 import os
 from pathlib import Path
@@ -19,6 +19,8 @@ from .schema import (AssetFieldResult, CitySnapshot, Region, RunRecord, Scenario
 from .storage import Store
 from .terrain import Terrain
 from .weather import WeatherArchive
+from .operations import PERIODS, inspection_network, weather_benchmark, weather_controls, weather_replay
+from .snow_experiment import SnowStudy, SnowStudyRequest
 
 log = logging.getLogger(__name__)
 PILOT_QUERY = ",".join(map(str, PILOT))
@@ -53,11 +55,34 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
     api.state.wind_solver = solver or (HttpWindSolver(url) if url else UnavailableWindSolver())
     api.state.city = city
     api.state.store = store
+    snow_study = SnowStudy(city, archive)
 
     @api.get("/api/v1/health")
     def health():
         return {"status": "ok", "solver_connected": not isinstance(api.state.wind_solver, UnavailableWindSolver),
-                "terrain_loaded": bool(city.terrain.metadata)}
+                "terrain_loaded": bool(city.terrain.metadata), "snow_solver_connected": snow_study.available}
+
+    @api.get("/api/v1/operations/weather")
+    def operation_weather(period: Literal["evening", "night"] = "evening"):
+        return {**weather_replay(archive, PERIODS[period]), "controls": weather_controls(),
+                "benchmark": weather_benchmark()}
+
+    @lru_cache(maxsize=1)
+    def current_network(revision):
+        return inspection_network(city)
+
+    @api.get("/api/v1/operations/network")
+    def operation_network():
+        return current_network(city.data_revision)
+
+    @api.post("/api/v1/operations/snow")
+    def operation_snow(payload: SnowStudyRequest):
+        try:
+            return snow_study.run(payload)
+        except FileNotFoundError as error:
+            raise HTTPException(503, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
 
     @api.get("/api/v1/city/metadata", response_model=CitySnapshot)
     def metadata():

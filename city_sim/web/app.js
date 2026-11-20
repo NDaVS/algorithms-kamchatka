@@ -1,11 +1,13 @@
 import { $, format, request } from './api.js';
 import { createMap } from './map.js';
+import { createOperations } from './operations.js';
 import { createScenarios } from './scenarios.js';
 
 async function start() {
   const [metadata, health] = await Promise.all([request('/city/metadata'), request('/health')]);
-  $('solver-dot').classList.toggle('connected', health.solver_connected);
-  $('solver-status').textContent = health.solver_connected ? 'Решатель настроен' : 'Решатель не подключён';
+  $('solver-dot').classList.toggle('connected', health.snow_solver_connected || health.solver_connected);
+  $('solver-status').textContent = health.snow_solver_connected ? 'Расчёт снега подключён' :
+    health.solver_connected ? 'Решатель ветра настроен' : 'Расчёт снега не подключён';
   const evidence = metadata.building_evidence ?? {};
   $('candidate-row').hidden = !evidence.location_check?.candidate_outlines;
   $('gba-legend').hidden = !metadata.heights.estimated_from_gba;
@@ -18,9 +20,14 @@ async function start() {
   ].filter(Boolean).join(' · ');
   if (!window.maplibregl) throw new Error('Отсутствует MapLibre. Выполните python -m city_sim.vendor.');
   let scenarios;
-  const view = createMap(metadata, area => scenarios?.setArea(area));
+  let operations;
+  const view = createMap(metadata, area => {
+    scenarios?.setArea(area);
+    operations?.setArea(area);
+  }, asset => operations?.buildingDetails(asset) || []);
   await view.ready;
   scenarios = createScenarios(view, health, metadata.data_revision);
+  operations = createOperations(view, health);
   document.documentElement.dataset.ready = 'true';
 }
 
