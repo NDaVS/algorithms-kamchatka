@@ -484,9 +484,13 @@ export function createOperations(view, health) {
     try {
       const result = await runCity(token, payload);
       if (!result || token !== snowRequest) return;
+      const displayedTerm = preserve ? calculated.wind_frames[modelFrame]?.valid_at : undefined;
       calculated = result;
       const m = result.metrics;
-      modelFrame = result.wind_frames.length-1;
+      const matchingFrame = displayedTerm
+        ? result.wind_frames.findIndex(frame => Date.parse(frame.valid_at) === Date.parse(displayedTerm))
+        : -1;
+      modelFrame = matchingFrame >= 0 ? matchingFrame : result.wind_frames.length-1;
       weather.setResult(result);
       weather.setFrame(modelFrame);
       if (result.input.source === 'live' || result.input.source === 'reanalysis') {
@@ -512,7 +516,7 @@ export function createOperations(view, health) {
         'Свежий снег оценён моделью. Состояние покрытия и старый снег требуют отдельной оценки.'
       ]);
       const [w, s, e, n] = result.fit_bounds;
-      if (active()) map.fitBounds([[w, s], [e, n]], { padding: 52, maxZoom: 17, duration: 550 });
+      if (active() && !preserve) map.fitBounds([[w, s], [e, n]], { padding: 52, maxZoom: 17, duration: 550 });
       updateTimeline();
       paint();
     } catch (error) {
