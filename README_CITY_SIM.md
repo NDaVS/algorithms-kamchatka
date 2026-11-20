@@ -32,8 +32,9 @@ python -m city_sim
 Для расчёта снега установите закреплённую версию модели Данила (из корня проекта):
 
 ```sh
-git clone https://github.com/NDaVS/kamcha-snow-sim.git city_sim/.state/danil
-git -C city_sim/.state/danil checkout --detach 367282af2b5e728f6cdd94c148065c4cec892cfd
+git init city_sim/.state/danil
+git -C city_sim/.state/danil fetch --depth=1 https://github.com/NDaVS/kamcha-snow-sim.git 367282af2b5e728f6cdd94c148065c4cec892cfd
+git -C city_sim/.state/danil checkout --detach FETCH_HEAD
 docker compose -f compose.city-sim.yml up --build --detach --wait
 ```
 
