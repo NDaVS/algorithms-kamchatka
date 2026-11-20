@@ -1,13 +1,22 @@
 import { $, empty, format, request } from './api.js';
-import { areas } from './map.js';
+import { createWeatherLayers, localTerm as time, raster } from './weather_layers.js';
 
 const titles = {
   inspect: 'Район требует проверки', missing: 'Прогноз недоступен',
   forecast_below_threshold: 'Сигналов выше порога нет'
 };
 const reasons = { snow: 'снегопад', wind: 'сильный ветер или порывы', source_conflict: 'сведения расходятся' };
-const time = value => new Intl.DateTimeFormat('ru', { timeZone: 'Asia/Kamchatka',
-  day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+const datasets = { archive: 'forecast', 'atlas-history': 'history', live: 'live' };
+const modelNames = {
+  snow_cm: 'Свежий снег по модели', drift_cm: 'Наносы сверх снегопада',
+  opposite_snow_cm: 'Снег при развороте ветра', combined: 'Приоритет проверки дорог',
+  opposite: 'Приоритет при развороте ветра', terrain: 'Рельеф · индекс низины',
+  uniform: 'Равномерный фон · индекс', weather_snow: 'Снегопад на входе модели',
+  weather_wind: 'Скорость ветра на входе модели', weather_distance: 'До погодной точки'
+};
+const units = { snow_cm: 'см', drift_cm: 'см', opposite_snow_cm: 'см',
+  weather_snow: 'см', weather_wind: 'м/с', weather_distance: 'км' };
+const plural = new Intl.PluralRules('ru');
 
 function point(coordinates, properties) {
   return { type: 'Feature', geometry: { type: 'Point', coordinates }, properties };
@@ -31,164 +40,205 @@ function download(file, data) {
 }
 
 export function createOperations(view, health) {
-  let district = 'center';
-  let archive;
-  let catalog;
-  let calculated;
-  let network;
-  let weatherRequest = 0;
-  let snowRequest = 0;
-  let busy = false;
   const map = view.map;
-  const weatherTerm = $('ops-term');
-  const input = $('ops-input');
-  const cityTerm = $('ops-city-term');
-  const storm = $('ops-event');
-  const cityMode = () => $('ops-scope').value === 'city';
+  const weather = createWeatherLayers(map);
+  const scope = $('ops-scope');
+  const source = $('ops-input');
+  const term = $('ops-city-term');
   const resultStatus = $('ops-result-status');
-  const inputReady = () => input.value === 'manual' || (cityMode()
-    ? (input.value === 'historic' ? storm.value : cityTerm.value)
-    : selected()?.sample?.snow_mm_3h != null);
-  const currentRows = () => archive?.rows.filter(r => r.valid_at === weatherTerm.value) ?? [];
-  const selected = () => currentRows().find(r => r.district_id === district);
+  const layer = $('ops-layer');
+  const slider = $('timeline-range');
+  const play = $('timeline-play');
+  const canvas = map.getCanvas();
+  let district = 'center';
+  let catalog;
+  let archive;
+  let network;
+  let calculated;
+  let busy = false;
+  let snowRequest = 0;
+  let weatherRequest = 0;
+  let modelFrame;
+  let player;
+  let drawing = false;
+  let vertices = [];
+  let zone;
   const active = () => !$('operations-panel').hidden;
+  const currentRows = () => archive?.rows.filter(r => r.valid_at === $('ops-term').value) ?? [];
+  const atlasDataset = () => datasets[source.value];
 
   function updateButton() {
-    $('ops-calculate').disabled = !health.snow_solver_connected || !inputReady() || busy;
+    const needsTerm = Boolean(atlasDataset()) && !term.value;
+    const needsZone = scope.value === 'zone' && (!zone || drawing);
+    const needsEvent = source.value === 'historic' && !$('ops-event').value;
+    $('ops-calculate').disabled = !health.snow_solver_connected || needsTerm || needsZone || needsEvent || busy;
   }
 
-  function updateInputs() {
-    const city = cityMode();
-    $('ops-district-weather').hidden = city;
-    input.querySelector('[value="historic"]').hidden = !city;
-    if (!city && input.value === 'historic') input.value = 'archive';
-    input.querySelector('[value="archive"]').textContent = city ? 'Архивная сетка OpenWeather' : 'Выбранный срок прогноза';
-    $('ops-manual').hidden = input.value !== 'manual';
-    $('ops-archive-input').hidden = input.value !== 'archive';
-    $('ops-city-term-label').hidden = !city || input.value !== 'archive';
-    $('ops-event-label').hidden = !city || input.value !== 'historic';
-    $('ops-calculate').textContent = city ? 'Рассчитать для города' : 'Рассчитать для района';
-    if (city && input.value === 'archive' && catalog && !cityTerm.value) {
-      resultStatus.textContent = 'Локальный архив прогнозов OpenWeather недоступен.';
-    }
-    updateButton();
+  function pause() {
+    clearInterval(player);
+    player = undefined;
+    play.textContent = '▶';
+    play.setAttribute('aria-label', 'Воспроизвести');
+    play.setAttribute('aria-pressed', 'false');
   }
 
-  function showForecast() {
-    const row = selected();
+  function updateTimeline() {
+    const resultFrames = calculated?.timeline?.length ? calculated.wind_frames : null;
+    const options = resultFrames?.map(frame => frame.valid_at) || Array.from(term.options, option => option.value);
+    const index = resultFrames ? modelFrame ?? resultFrames.length-1 : Math.max(term.selectedIndex, 0);
+    $('weather-timeline').hidden = !options.length;
+    if (!options.length) return;
+    slider.max = options.length-1;
+    slider.value = index;
+    $('timeline-title').textContent = resultFrames ? 'Накопление снега и ветер' : 'Шкала погоды';
+    const label = i => options[i] ? time(options[i]) : `Шаг ${i+1}`;
+    $('timeline-current').textContent = label(index);
+    $('timeline-start').textContent = label(0);
+    $('timeline-end').textContent = label(options.length-1);
+    $('ops-prev').disabled = term.selectedIndex <= 0;
+    $('ops-next').disabled = term.selectedIndex < 0 || term.selectedIndex === term.options.length-1;
+    play.disabled = options.length <= 1;
+  }
+
+  function showDistrictWeather() {
+    const row = currentRows().find(item => item.district_id === district);
     const sample = row?.sample;
-    const current = row?.observation;
-    if (row) {
-      $('ops-signal').dataset.state = row.status;
-      $('ops-signal').textContent = [titles[row.status], ...row.reasons.map(key => reasons[key]).filter(Boolean)].join(' · ');
-    }
+    $('ops-signal').dataset.state = row?.status || 'missing';
+    $('ops-signal').textContent = row ? [titles[row.status], ...row.reasons.map(key => reasons[key]).filter(Boolean)].join(' · ')
+      : 'Районный архив недоступен';
     lines($('ops-weather'), [
-      sample?.snow_mm_3h == null ? 'Снег за 3 ч · значение отсутствует' : `Снег за 3 ч · ${format(sample.snow_mm_3h)} мм водного эквивалента`,
+      sample?.snow_mm_3h == null ? 'Для точки нет числа снегопада' : `Снег за 3 ч · ${format(sample.snow_mm_3h)} мм водного эквивалента`,
       sample ? `Ветер · ${format(sample.wind.speed_mps)} м/с · от ${sample.wind.direction_from_deg}°` : '',
-      sample?.weather.retrieved_at ? `Получено ${time(sample.weather.retrieved_at)} · OpenWeather Forecast` : '',
-      current ? `OpenWeather Current на момент решения · ${time(current.weather.valid_at)}` : 'Свежая запись Current на момент решения отсутствует',
-      network?.length_m_by_district[district] ? `Дорог в зоне района · ${format(network.length_m_by_district[district]/1000)} км графа` : ''
+      network?.length_m_by_district[district] ? `Дороги около точки · ${format(network.length_m_by_district[district]/1000)} км графа` : ''
     ].filter(Boolean));
-    updateButton();
-    paint();
   }
 
   function paint() {
-    const visible = active() && calculated;
-    const choice = $('ops-layer').value;
-    const rank = visible ? calculated.ranking[choice === 'snow_cm' ? 'combined' : choice] || [] : [];
-    const markers = active() && !cityMode() ? currentRows().map(r => point(r.coordinates, {
-      status: r.status, district: r.district_id
-    })) : [];
-    const flagged = new Set(currentRows().filter(r => r.status === 'inspect').map(r => r.district_id));
-    const highlighted = active() && !visible && !cityMode() ? network?.features.filter(f => flagged.has(f.properties.district_id)) : [];
-    map.getSource('operations-roads').setData({ ...empty(), features: highlighted || [] });
-    markers.push(...rank.map(r => point([r.lon, r.lat], {
-      status: 'priority', edge: r.edge_id, name: r.name, value: r.value
-    })));
-    if (visible && choice.startsWith('weather_')) {
-      markers.push(...calculated.weather_alerts.map(alert => point(alert.coordinates, {
-        status: alert.extrapolated ? 'extrapolated' : 'inspect'
-      })));
+    const choice = layer.value;
+    for (const button of document.querySelectorAll('[data-model]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.model === choice));
     }
-    map.getSource('operations-points').setData(markers.length ? { ...empty(), features: markers } : empty());
+    const image = calculated?.overlays[choice];
+    const visible = Boolean(image);
+    const rankKey = ['snow_cm', 'drift_cm'].includes(choice) ? 'combined' : choice === 'opposite_snow_cm' ? 'opposite' : choice;
+    const temporal = calculated?.timeline?.length > 0 && modelFrame < calculated.timeline.length;
+    const rank = visible && !temporal ? calculated.ranking[rankKey] || [] : [];
+    const markers = calculated?.weather_alerts?.map(alert => point(alert.coordinates, {
+      status: alert.extrapolated ? 'extrapolated' : 'inspect'
+    })) || [];
+    const ranked = rank.filter(row => choice !== 'uniform').map(row => point([row.lon, row.lat], { status: 'priority' }));
+    const flagged = new Set(currentRows().filter(r => r.status === 'inspect').map(r => r.district_id));
+    const highlighted = active() && !calculated && scope.value === 'district' && source.value === 'archive'
+      ? network?.features.filter(f => flagged.has(f.properties.district_id)) : [];
+    map.getSource('operations-roads').setData({ ...empty(), features: highlighted || [] });
+    map.getSource('operations-points').setData({ ...empty(), features: choice.startsWith('weather_') ? markers : ranked });
     map.setLayoutProperty('operations-snow', 'visibility', visible ? 'visible' : 'none');
-    $('scene-snow-legend').hidden = !visible;
-    if (!visible) return;
-    const [w, s, e, n] = calculated.bounds;
-    map.getSource('operations-snow').updateImage({
-      url: calculated.overlays[choice], coordinates: [[w, n], [e, n], [e, s], [w, s]]
-    });
-    $('ops-scale-label').textContent = ({
-      snow_cm: 'Модельная толщина свежего снега', terrain: 'Рельеф · индекс низины',
-      uniform: 'Равномерный фон', opposite: 'Противоположный ветер · индекс',
-      combined: 'Снег и рельеф · индекс', weather_snow: 'Свежий снег по погоде',
-      weather_wind: 'Ветер по погоде · максимум за расчётный интервал',
-      weather_distance: 'Расстояние до погодной точки'
-    })[choice];
-    const unit = ({weather_wind: 'м/с', weather_distance: 'км', weather_snow: 'см', snow_cm: 'см'})[choice];
-    $('ops-scale-start').textContent = unit ? `0 ${unit}` : '0';
-    $('ops-scale-end').textContent = unit ? `${calculated.scales?.[choice] ?? 15}+ ${unit}` : '1';
-    $('ops-roads-label').textContent = choice.startsWith('weather_') ?
-      (calculated.weather_alerts.length ? 'Точки · погодные сигналы. Фиолетовые · источник дальше 3 км.' : '') :
-      choice === 'uniform' ? 'Равномерный фон · все сегменты имеют равный приоритет' :
-      rank.length ? 'Дорожные сегменты с наибольшим индексом' : 'Приоритетные сегменты в этой области отсутствуют';
-    $('ops-roads').replaceChildren(...(choice === 'uniform' ? [] : rank).map(r => {
+    $('ops-scale-model').hidden = !visible;
+    if (visible) {
+      const frame = choice === 'snow_cm' && calculated.timeline?.[modelFrame];
+      raster(map, 'operations-snow', calculated.bounds, frame || image);
+      $('ops-scale-label').textContent = frame ? 'Свежий снег к выбранному часу' : modelNames[choice];
+      const unit = units[choice];
+      const maximum = calculated.scales[choice] ?? 1;
+      $('ops-scale-start').textContent = unit ? `0 ${unit}` : '0';
+      $('ops-scale-mid').textContent = format(maximum/2);
+      const capped = calculated.clipped?.includes(choice) ? '+' : '';
+      $('ops-scale-end').textContent = unit ? `${maximum}${capped} ${unit}` : '1';
+    }
+    weather.legend();
+    $('ops-roads-label').textContent = temporal
+      ? 'Рейтинг дорог рассчитан на конец интервала.'
+      : rank.length && choice !== 'uniform' ? 'Сегменты с наибольшим индексом на конец интервала.'
+        : 'Для этого слоя список приоритетов не построен.';
+    $('ops-roads').replaceChildren(...rank.filter(() => choice !== 'uniform').map(row => {
       const li = document.createElement('li');
       const button = document.createElement('button');
       button.type = 'button';
-      button.textContent = `${r.name || 'Сегмент дороги'} · ${format(r.value, 2)}`;
-      button.title = r.edge_id;
-      if (r.excess_cm != null) {
-        const explanation = document.createElement('div');
-        const excess = r.excess_cm > 0 ? '+' : '';
-        explanation.textContent = `К фону ${excess}${format(r.excess_cm)} см` +
-          (r.terrain_weight == null ? '' : ` · рельеф ${format(r.terrain_weight, 2)}`);
-        li.append(button, explanation);
-      } else {
-        li.append(button);
+      button.textContent = `${row.name || 'Сегмент дороги'} · ${format(row.value, 2)}`;
+      button.title = row.edge_id;
+      button.addEventListener('click', () => map.easeTo({ center: [row.lon, row.lat], zoom: 16.2 }));
+      li.append(button);
+      if (row.fresh_snow_cm != null) {
+        const label = document.createElement('div');
+        label.textContent = `${format(row.fresh_snow_cm)} см снега` +
+          (row.excess_cm == null ? '' : ` · ${row.excess_cm > 0 ? '+' : ''}${format(row.excess_cm)} см к фону`);
+        li.append(label);
       }
-      button.addEventListener('click', () => map.easeTo({ center: [r.lon, r.lat], zoom: 16.2 }));
       return li;
     }));
   }
 
   function resetSnow() {
     ++snowRequest;
+    calculated = undefined;
+    modelFrame = undefined;
     busy = false;
-    calculated = null;
     $('ops-snow-result').hidden = true;
     resultStatus.textContent = health.snow_solver_connected ? '' : 'Расчёт снега Данила не подключён.';
+    weather.setResult(undefined);
+    updateButton();
+    updateTimeline();
+    paint();
   }
 
-  async function loadWeather() {
-    const token = ++weatherRequest;
-    resetSnow();
-    archive = null;
-    weatherTerm.replaceChildren();
-    $('ops-weather-json').disabled = true;
-    $('ops-signal').textContent = 'Загружаю прогноз';
+  function selectWeather() {
+    const dataset = atlasDataset();
+    if (catalog && (!dataset || catalog[dataset])) weather.setWeather(dataset, term.value);
     updateButton();
-    paint();
-    try {
-      const result = await request(`/operations/weather?period=${$('ops-period').value}`);
-      if (token !== weatherRequest) return;
-      archive = result;
-      const terms = [...new Set(result.rows.map(row => row.valid_at))];
-      weatherTerm.replaceChildren(...terms.map(value => new Option(time(value), value)));
-      const m = result.metrics;
-      const b = result.benchmark.metrics;
-      lines($('ops-weather-checks'), [
-        `Архив · районных сигналов ${m.candidate_inspection_slots}, общий прогноз ${m.baseline_inspection_slots}`,
-        `Доступность · ${m.forecast_terms} из ${m.district_terms} точек и сроков`,
-        `Условные тесты · обнаружено ${b.candidate.tp} из ${b.candidate.tp+b.candidate.fn}, общий прогноз ${b.baseline.tp}`,
-        'Выезды и фактическое состояние дороги в архиве отсутствуют'
-      ]);
-      $('ops-weather-json').disabled = false;
-      showForecast();
-    } catch (error) {
-      if (token === weatherRequest) $('ops-signal').textContent = error.message;
+    updateTimeline();
+  }
+
+  function setTerms() {
+    const dataset = atlasDataset();
+    const previously = term.value;
+    const times = catalog?.[dataset]?.terms || [];
+    term.replaceChildren(...times.map(value => new Option(time(value), value)));
+    if (times.includes(previously)) term.value = previously;
+    if (dataset === 'live' && !times.includes(previously) && times.length > 1) {
+      const now = Date.parse(catalog.live.retrieved_at);
+      term.selectedIndex = Math.max(0, times.findIndex(t => Date.parse(t) >= now));
     }
+    selectWeather();
+  }
+
+  async function updateLive() {
+    const requestId = ++weatherRequest;
+    $('ops-live-refresh').disabled = true;
+    $('ops-live-state').textContent = 'Получаю прогноз…';
+    try {
+      const data = await request('/operations/atlas/live');
+      if (requestId !== weatherRequest || source.value !== 'live') return;
+      const changed = catalog.live?.sha256 && catalog.live.sha256 !== data.sha256;
+      const resumeModel = changed && calculated?.input.source === 'live';
+      catalog.live = data;
+      weather.setCatalog(catalog);
+      if (changed) resetSnow();
+      $('ops-live-state').textContent = `Обновлено ${time(data.retrieved_at)} · модельный прогноз`;
+      setTerms();
+      if (resumeModel && !$('ops-calculate').disabled) $('ops-form').requestSubmit();
+    } catch (error) {
+      if (requestId === weatherRequest) $('ops-live-state').textContent = error.message;
+    } finally {
+      if (requestId === weatherRequest) $('ops-live-refresh').disabled = false;
+    }
+  }
+
+  function updateInput() {
+    ++weatherRequest;
+    pause();
+    resetSnow();
+    $('ops-draw-controls').hidden = scope.value !== 'zone';
+    $('ops-manual').hidden = source.value !== 'manual';
+    $('ops-archive-input').hidden = source.value !== 'archive';
+    $('ops-city-term-label').hidden = !atlasDataset();
+    $('ops-event-label').hidden = source.value !== 'historic';
+    $('ops-calculate').textContent = ({ city: 'Рассчитать снег для города',
+      district: 'Рассчитать снег для района', zone: 'Рассчитать снег в контуре' })[scope.value];
+    $('ops-live-controls').hidden = source.value !== 'live';
+    $('ops-district-audit').hidden = scope.value !== 'district' || source.value !== 'archive';
+    setTerms();
+    if (!atlasDataset() || !catalog?.[atlasDataset()]) weather.setWeather(undefined, undefined);
+    if (source.value === 'live' && catalog) updateLive();
   }
 
   async function runCity(token, data) {
@@ -199,157 +249,240 @@ export function createOperations(view, health) {
       if (token !== snowRequest) return;
       if (result.status === 'completed') return result;
       if (result.status === 'failed') throw new Error(result.error);
-      resultStatus.textContent = result.total_tiles == null ? 'Готовлю городской расчёт…' :
-        `Весь город · обработано ${result.completed_tiles} из ${result.total_tiles} участков`;
+      resultStatus.textContent = result.total_tiles == null ? 'Готовлю сетку и входы…' :
+        `Расчёт · ${result.completed_tiles} из ${result.total_tiles} участков`;
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
 
-  function showCity(result) {
-    const m = result.metrics;
-    const source = result.source;
-    const settings = source.kind === 'openweather_forecast'
-      ? `OpenWeather · архивный прогноз на ${time(source.valid_at)}`
-      : source.kind === 'manual' ? 'Ручной сценарий'
-        : `${source.title} · реанализ ECMWF IFS · ${time(source.start_at)}–${time(source.end_at).slice(-5)}`;
-    const signal = m.road_m_weather_alert == null ? '' :
-      ` · погодный сигнал на ${format(m.road_m_weather_alert/1000)} км`;
-    resultStatus.textContent = `Весь город · ${settings} · ${format(m.road_m_covered/1000)} км графа${signal}`;
-    lines($('ops-snow-checks'), [
-      `Рассчитано участков · ${m.computed_tiles ?? 0} из ${m.eligible_tiles}`,
-      `Участки без погодных входов · ${m.missing_weather_tiles ?? 0}`,
-      `Использовано погодных входов · ${m.distinct_weather_inputs}`,
-      ...(m.road_m_weather_local == null ? [] : [
-        `Архив OpenWeather · ${source.snapshot_points} точек запроса, ${source.provider_coordinates_reported} координат в ответах`,
-        `Погода перенесена с расстояния больше 3 км · ${m.extrapolated_weather_tiles ?? 0} участков`,
-        `Погодный сигнал · ${m.weather_alert_tiles ?? 0} участков, из них ${m.weather_alert_tiles_local ?? 0} с точкой в пределах 3 км`
-      ]),
-      `Дороги с оценкой · ${format(m.road_m_covered/1000)} из ${format(m.road_m_in_city/1000)} км`,
-      `В том числе расширение графа OSM · ${format((m.extended_road_m_covered ?? 0)/1000)} км с оценкой`,
-      `Сегментов с оценкой · ${m.road_segments_covered ?? 0}`,
-      'Граница города в пределах доступного рельефа. Результат моделирования требует проверки на местности.'
-    ]);
+  function setFrame(index) {
+    if (calculated?.timeline?.length) {
+      modelFrame = index;
+      layer.value = 'snow_cm';
+      weather.setFrame(index);
+      if (calculated.input.source === 'live') {
+        weather.setWeather('live', calculated.wind_frames[index].valid_at);
+      }
+      updateTimeline();
+      paint();
+      return;
+    }
+    if (index >= 0 && index < term.options.length) {
+      term.selectedIndex = index;
+      resetSnow();
+      selectWeather();
+    }
   }
 
+  slider.addEventListener('input', () => { pause(); setFrame(slider.valueAsNumber); });
+  play.addEventListener('click', () => {
+    if (player) { pause(); return; }
+    if (slider.valueAsNumber >= Number(slider.max)) setFrame(0);
+    play.textContent = 'Ⅱ';
+    play.setAttribute('aria-label', 'Приостановить');
+    play.setAttribute('aria-pressed', 'true');
+    player = setInterval(() => {
+      const next = slider.valueAsNumber+1;
+      if (next > Number(slider.max)) pause();
+      else setFrame(next);
+    }, calculated?.timeline?.length ? 1200 : 900);
+  });
+  term.addEventListener('change', () => { pause(); resetSnow(); selectWeather(); });
+  for (const [id, step] of [['ops-prev', -1], ['ops-next', 1]]) $(id).addEventListener('click', () => {
+    pause();
+    const index = term.selectedIndex+step;
+    if (index >= 0 && index < term.options.length) {
+      term.selectedIndex = index;
+      resetSnow();
+      selectWeather();
+    }
+  });
+  source.addEventListener('change', updateInput);
+  $('ops-event').addEventListener('change', () => { pause(); resetSnow(); });
+  $('ops-live-refresh').addEventListener('click', updateLive);
+  setInterval(() => { if (source.value === 'live' && !busy && !player) updateLive(); }, 20*60*1000);
+  for (const button of document.querySelectorAll('[data-model]')) button.addEventListener('click', () => {
+    layer.value = button.dataset.model;
+    layer.dispatchEvent(new Event('change'));
+  });
+  layer.addEventListener('change', () => {
+    if (layer.value !== 'snow_cm' && calculated?.timeline?.length) {
+      pause();
+      modelFrame = calculated.wind_frames.length-1;
+      weather.setFrame(modelFrame);
+      if (calculated.input.source === 'live') weather.setWeather('live', calculated.wind_frames[modelFrame].valid_at);
+      updateTimeline();
+    }
+    paint();
+  });
+  function showDraw() {
+    const ring = vertices.length >= 3 ? [...vertices, vertices[0]] : null;
+    const features = vertices.map(coordinates => point(coordinates, {}));
+    if (ring) features.unshift({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] }, properties: {} });
+    else if (vertices.length === 2) features.unshift({ type: 'Feature', geometry: { type: 'LineString', coordinates: vertices }, properties: {} });
+    map.getSource('operations-zone').setData({ ...empty(), features });
+    canvas.dataset.drawing = String(drawing);
+    $('ops-draw-start').textContent = zone || drawing ? 'Начертить заново' : 'Начертить';
+    $('ops-draw-undo').hidden = $('ops-draw-end').hidden = !drawing;
+    $('ops-draw-undo').disabled = !vertices.length;
+    $('ops-draw-end').disabled = vertices.length < 3;
+    $('ops-draw-status').textContent = drawing ? `Ставьте точки на карте · ${vertices.length}/24` :
+      zone ? `Контур готов · ${zone.length} точек` : 'Задайте границу щелчками по карте.';
+    updateButton();
+  }
+  function finishDraw() {
+    if (drawing && vertices.length >= 3) {
+      drawing = false;
+      zone = [...vertices];
+      showDraw();
+    }
+  }
+  $('ops-draw-start').addEventListener('click', () => {
+    zone = undefined;
+    vertices = [];
+    drawing = true;
+    resetSnow();
+    showDraw();
+  });
+  $('ops-draw-end').addEventListener('click', finishDraw);
+  $('ops-draw-undo').addEventListener('click', () => { vertices.pop(); showDraw(); });
+  map.on('click', event => {
+    if (!drawing || vertices.length >= 24) return;
+    vertices.push([Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))]);
+    showDraw();
+  });
+  scope.addEventListener('change', () => {
+    if (scope.value !== 'zone') {
+      drawing = false;
+      vertices = [];
+      zone = undefined;
+    }
+    showDraw();
+    updateInput();
+  });
+
+  $('ops-snow-opacity').addEventListener('input', event =>
+    map.setPaintProperty('operations-snow', 'raster-opacity', event.target.valueAsNumber/100));
+  map.setPaintProperty('operations-snow', 'raster-opacity', $('ops-snow-opacity').valueAsNumber/100);
   $('ops-form').addEventListener('submit', async event => {
     event.preventDefault();
-    if (!inputReady() || !health.snow_solver_connected || busy) return;
+    if ($('ops-calculate').disabled) return;
+    pause();
+    resetSnow();
     const token = ++snowRequest;
     busy = true;
     updateButton();
-    resultStatus.textContent = 'Рассчитываю снег и сравниваю контрольные варианты…';
-    const city = cityMode();
-    const linked = input.value === 'archive';
-    const manual = {
-      wind_speed_ms: $('ops-speed').valueAsNumber, wind_from_deg: $('ops-direction').valueAsNumber,
-      snowfall_cm_h: $('ops-snow').valueAsNumber };
-    const ratio = $('ops-ratio').valueAsNumber;
+    resultStatus.textContent = 'Готовлю расчёт снега…';
+    const payload = {
+      source: { archive: 'openweather', 'atlas-history': 'atlas_history', historic: 'reanalysis',
+        live: 'live', manual: 'manual' }[source.value]
+    };
+    if (scope.value === 'district') payload.district_id = district;
+    if (scope.value === 'zone') payload.zone = zone;
+    if (atlasDataset()) payload.valid_at = term.value;
+    if (source.value === 'archive') payload.snow_to_liquid_ratio = $('ops-ratio').valueAsNumber;
+    if (source.value === 'historic') payload.event_id = $('ops-event').value;
+    if (source.value === 'live') {
+      payload.weather_revision = catalog.live.sha256;
+      payload.hours = Math.min(6, term.options.length-term.selectedIndex);
+    }
+    if (source.value === 'manual') Object.assign(payload, { wind_speed_ms: $('ops-speed').valueAsNumber,
+      wind_from_deg: $('ops-direction').valueAsNumber, snowfall_cm_h: $('ops-snow').valueAsNumber });
     try {
-      const result = city ? await runCity(token, linked
-        ? { source: 'openweather', valid_at: cityTerm.value, snow_to_liquid_ratio: ratio }
-        : input.value === 'historic' ? { source: 'reanalysis', event_id: storm.value } : { source: 'manual', ...manual })
-        : await request('/operations/snow', linked
-          ? { district_id: district, forecast_sample_id: selected().sample.sample_id, snow_to_liquid_ratio: ratio }
-          : { district_id: district, ...manual });
-      if (token !== snowRequest || !result) return;
+      const result = await runCity(token, payload);
+      if (!result || token !== snowRequest) return;
       calculated = result;
-      if (city) {
-        showCity(result);
-      } else {
-        const w = result.resolved_weather;
-        resultStatus.textContent = `${result.district} · ${linked ? time(result.weather.weather.valid_at) : 'ручной сценарий'} · ${format(w.wind_speed_ms)} м/с от ${w.wind_from_deg}° · ${format(w.snowfall_cm)} см за ${w.hours} ч`;
-        const m = result.metrics;
-        const fraction = value => value == null ? 'нет сравнения' : `${format(value * 100, 0)}%`;
-        const building = result.building_height_sources;
-        lines($('ops-snow-checks'), [
-          `Сегментов в расчёте · ${m.road_segments_covered}`,
-          `Зданий с оценкой по сторонам · ${m.building_sides_covered}. Нажмите здание на карте.`,
-          `Спокойный ветер и смена стороны за зданием · ${m.calm_flat_pass && result.directional_control.passes ? 'проверки пройдены' : 'ошибка контроля'}`,
-          `Разница при развороте ветра, средняя по сетке · ${format(m.reverse_mae_cm, 2)} см`,
-          `Разница при уменьшении оценочных высот на 25% · ${format(m.shorter_buildings_mae_cm, 2)} см`,
-          `Совпадение списков при развороте ветра, по Жаккару · ${fraction(m.top_k_reverse_overlap)}`,
-          `Неизвестная высота · ${building.unknown ?? 0} контуров в окрестности, в расчёте принято 9 м`,
-          'Рельеф добавлен как вес индекса. Замеры наносов отсутствуют.'
-        ]);
-      }
-      for (const option of $('ops-layer').options) {
-        if (option.value.startsWith('weather_')) option.hidden = !city ||
-          (option.value === 'weather_distance' && result.source.kind === 'manual');
-      }
-      $('ops-layer').value = 'combined';
+      const m = result.metrics;
+      modelFrame = result.wind_frames.length-1;
+      weather.setResult(result);
+      weather.setFrame(modelFrame);
+      if (result.input.source === 'live') weather.setWeather('live', result.wind_frames[modelFrame].valid_at);
+      layer.querySelector('[value="weather_distance"]').hidden = result.source.kind === 'manual';
+      layer.value = 'snow_cm';
       $('ops-snow-result').hidden = false;
-      const [w0, s, e, n] = result.fit_bounds || result.bounds;
-      if (active()) map.fitBounds([[w0, s], [e, n]], { padding: 55, pitch: 0, bearing: 0, duration: 550 });
+      const count = m.computed_tiles ?? 0;
+      const label = ({ one: 'участок', few: 'участка' })[plural.select(count)] || 'участков';
+      $('ops-calc-summary').textContent = `${result.district} · ${count} ${label} · ${format(m.road_m_covered/1000)} км дорог`;
+      resultStatus.textContent = '';
+      lines($('ops-snow-checks'), [
+        `Модель Данила · ${result.provenance.engine_commit.slice(0, 8)}`,
+        `Погодных входов · ${m.distinct_weather_inputs}. Пропуски на ${m.missing_weather_tiles ?? 0} участках.`,
+        `Сегментов с оценкой · ${m.road_segments_covered ?? 0}`,
+        ...(m.road_m_weather_alert == null ? [] : [`Погодный сигнал · ${format(m.road_m_weather_alert/1000)} км`,
+          `Источник дальше 3 км · ${m.extrapolated_weather_tiles ?? 0} участков`]),
+        'Свежий снег оценён моделью. Состояние покрытия и старый снег требуют отдельной оценки.'
+      ]);
+      const [w, s, e, n] = result.fit_bounds;
+      if (active()) map.fitBounds([[w, s], [e, n]], { padding: 52, maxZoom: 17, duration: 550 });
+      updateTimeline();
       paint();
     } catch (error) {
       if (token === snowRequest) resultStatus.textContent = error.message;
     } finally {
-      if (token === snowRequest) {
-        busy = false;
-        updateButton();
-      }
+      if (token === snowRequest) { busy = false; updateButton(); }
     }
   });
-
-  weatherTerm.addEventListener('change', () => {
-    const same = Array.from(cityTerm.options).find(option => Date.parse(option.value) === Date.parse(weatherTerm.value));
-    if (same) cityTerm.value = same.value;
-    resetSnow();
-    showForecast();
-  });
-  $('ops-period').addEventListener('change', loadWeather);
-  for (const control of [input, $('ops-scope'), cityTerm, storm]) control.addEventListener('change', () => {
-    resetSnow();
-    updateInputs();
-    showForecast();
-  });
-  $('ops-layer').addEventListener('change', paint);
-  $('ops-weather-json').addEventListener('click', () => { if (archive) download(`weather-${archive.run_id.slice(0, 12)}.json`, archive); });
   $('ops-snow-json').addEventListener('click', () => {
     if (!calculated) return;
-    if (calculated.tile_cells) {
-      const link = document.createElement('a');
-      link.href = `/api/v1/operations/city/runs/${calculated.run_id}/replay`;
-      link.click();
-    } else download(`snow-${calculated.run_id.slice(0, 12)}.json`, calculated);
+    const link = document.createElement('a');
+    link.href = `/api/v1/operations/city/runs/${calculated.run_id}/replay`;
+    link.click();
   });
-  for (const tab of document.querySelectorAll('.tabs button')) tab.addEventListener('click', paint);
-  map.on('click', 'operations-points', event => {
-    const p = event.features[0]?.properties;
-    if (p?.district && p.district !== district) {
-      $('area').value = p.district;
-      $('area').dispatchEvent(new Event('change'));
-    }
-  });
-  loadWeather();
-  request('/operations/city/catalog').then(data => {
+  $('ops-weather-json').addEventListener('click', () => { if (archive) download('district-weather.json', archive); });
+  $('ops-period').addEventListener('change', loadDistrictArchive);
+  $('ops-term').addEventListener('change', showDistrictWeather);
+
+  async function loadDistrictArchive() {
+    try {
+      const result = await request(`/operations/weather?period=${$('ops-period').value}`);
+      archive = result;
+      const terms = [...new Set(archive.rows.map(row => row.valid_at))];
+      $('ops-term').replaceChildren(...terms.map(value => new Option(time(value), value)));
+      $('ops-weather-json').disabled = false;
+      const m = archive.metrics;
+      lines($('ops-weather-checks'), [
+        `Архив · районных сигналов ${m.candidate_inspection_slots}, общий прогноз ${m.baseline_inspection_slots}`,
+        `Покрытие · ${m.forecast_terms} из ${m.district_terms} записей по районам и срокам`
+      ]);
+      showDistrictWeather();
+      paint();
+    } catch (error) { $('ops-signal').textContent = error.message; }
+  }
+  request('/operations/atlas').then(data => {
     catalog = data;
-    cityTerm.replaceChildren(...data.openweather.map(term => new Option(time(term.valid_at), term.valid_at)));
-    storm.replaceChildren(...data.storms.map(event => new Option(event.title, event.event_id)));
-    updateInputs();
-  }).catch(error => { if (cityMode()) resultStatus.textContent = error.message; });
-  request('/operations/network').then(data => {
-    network = data;
-    if (archive) showForecast();
-  }).catch(() => {});
-  return { buildingDetails(asset) {
-    if (!calculated || !active()) return [];
-    const sides = calculated.building_sides[asset];
-    if (!sides) return [];
-    const option = $('ops-layer').value;
-    if (option === 'terrain' || option === 'uniform') return [];
-    const field = option === 'opposite' ? 'opposite_cm' : 'combined_cm';
-    const names = { north: 'север', east: 'восток', south: 'юг', west: 'запад' };
-    const ranking = Object.entries(sides).sort((a, b) => b[1][field] - a[1][field]);
-    const most = ranking[0][1][field] - ranking[1][1][field] >= .1 ? names[ranking[0][0]] : 'выраженной стороны нет';
-    return [
-      `Свежий снег в полосах 5–30 м вокруг здания · ${most}`,
-      ranking.map(([side, values]) => `${names[side]} ${format(values[field], 1)} см`).join(' · ')
-    ];
-  }, setArea(area) {
-    if (!areas.some(candidate => candidate.id === area.id)) return;
-    district = area.id;
-    if (!cityMode()) resetSnow();
-    showForecast();
-  } };
+    weather.setCatalog(catalog);
+    updateInput();
+  }).catch(error => { resultStatus.textContent = error.message; });
+  request('/operations/city/catalog').then(data => {
+    $('ops-event').replaceChildren(...data.storms.map(event => new Option(event.title, event.event_id)));
+    updateButton();
+  }).catch(error => { resultStatus.textContent = error.message; });
+  request('/operations/network').then(data => { network = data; showDistrictWeather(); }).catch(() => {});
+  loadDistrictArchive();
+
+  return {
+    async snowDetails(where, nearby) {
+      if (!calculated) return [];
+      const frame = layer.value === 'snow_cm' ? modelFrame : undefined;
+      const query = new URLSearchParams({ lon: where.lng, lat: where.lat });
+      if (nearby) query.set('nearby_m', 22);
+      if (Number.isInteger(frame)) query.set('frame', frame);
+      try {
+        const row = await request(`/operations/city/runs/${calculated.run_id}/sample?${query}`);
+        if (row.snow_cm == null) return ['В этой точке нет ячейки расчёта снега.'];
+        return [
+          `Свежий снег по модели · ${format(layer.value === 'opposite_snow_cm' ? row.opposite_snow_cm ?? row.snow_cm : row.snow_cm)} см`,
+          row.weather_snow_cm == null ? null : `Снегопад на входе · ${format(row.weather_snow_cm)} см`,
+          row.weather_snow_cm == null ? null : `К фону · ${row.snow_cm > row.weather_snow_cm ? '+' : ''}${format(row.snow_cm-row.weather_snow_cm)} см`,
+          row.sample_distance_m ? `Ближайшая открытая ячейка · ${row.sample_distance_m} м от точки` : null,
+          `Ячейка модели · ${row.cell_width_m} × ${row.cell_height_m} м`
+        ].filter(Boolean);
+      } catch (error) { return [error.message]; }
+    },
+    setArea(area) {
+      district = area.id;
+      if (scope.value === 'district') resetSnow();
+      showDistrictWeather();
+    }
+  };
 }

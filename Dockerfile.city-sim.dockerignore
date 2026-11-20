@@ -11,6 +11,8 @@
 !weather_coverage/
 !weather_coverage/__init__.py
 !weather_coverage/geography.py
+!weather_coverage/heatmap_fields.py
+!weather_coverage/heatmap_interpolate.py
 !weather_coverage/osm/
 !weather_coverage/osm/*.osm.gz
 !data/

@@ -154,3 +154,58 @@ a.button { text-decoration: none; text-align: center; }
   color: #e7efeb; background: #14231fec; border: 1px solid #425449;
   border-radius: 5px; padding: 8px 10px 4px; font-size: 11px; pointer-events: none; }
 .scene-snow-legend .ops-scale { margin: 6px 0 1px; }
+
+.term-picker > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; margin-top: 5px; }
+.term-picker button { min-width: 32px; font-size: 17px; line-height: 1; }
+.ops-layers { display: grid; gap: 8px; margin: 14px 0; }
+.ops-layers h2 { margin: 0; }
+.ops-layers select { width: 100%; margin-top: 4px; }
+.ops-toggles { display: flex; gap: 12px; flex-wrap: wrap; }
+.ops-toggles label { display: inline-flex; align-items: center; gap: 5px; }
+.ops-opacity, #atlas-display-settings > label { display: grid; margin: 7px 0; }
+#atlas-status:empty, #ops-result-status:empty { display: none; }
+.scene-snow-legend > div + div { margin-top: 7px; }
+.scene-snow-legend p { margin: 5px 0 2px; color: #d1e6e7; }
+
+.ops-draw-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+#ops-draw-status { display: block; margin-top: 5px; }
+.weather-timeline {
+  position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 2;
+  width: min(490px, calc(100% - 28px)); padding: 12px 15px 10px;
+  background: #13221ff5; border: 1px solid #41564b; border-radius: 12px;
+  box-shadow: 0 12px 35px #0b17176e; color: #e7f1e9;
+}
+.weather-timeline-heading, .weather-timeline-endpoints { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.weather-timeline-heading output { color: #c9eabf; font-variant-numeric: tabular-nums; }
+.weather-timeline-track { display: flex; align-items: center; gap: 10px; margin: 7px 0 2px; }
+.weather-timeline-track button { padding: 5px; width: 32px; height: 30px; flex: 0 0 32px; }
+.weather-timeline-track input[type=range], .ops-opacity input[type=range], #atlas-opacity {
+  accent-color: #b6e4ab; cursor: pointer; background: transparent; border: 0; padding: 0;
+}
+.weather-timeline-endpoints { margin-left: 42px; color: var(--muted); font-size: 10px; }
+#map canvas[data-drawing=true] { cursor: crosshair; }
+@media (max-width: 700px) {
+  .weather-timeline { bottom: 22px; width: calc(100% - 52px); }
+  .scene-caption { display: none; }
+}
+.ops-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; background: #101b18; border: 1px solid #33463e; border-radius: 9px; padding: 3px; }
+.ops-presets button { border: 0; padding: 8px 5px; background: transparent; color: #abc0b5; }
+.ops-presets button[aria-pressed=true] { background: #314c3f; color: #e5f8e8; }
+.ops-live-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ops-live-meta p { margin: 0; }
+.map-tools { display: flex; align-items: flex-end; flex-direction: column-reverse; gap: 6px; }
+.map-base-controls { position: relative; border: 1px solid #425448; border-radius: 7px; background: #14221e; }
+.map-base-controls summary { cursor: pointer; padding: 8px 9px; color: #e3ede6; font-size: 12px; list-style: none; }
+.map-base-options { position: absolute; right: 0; top: calc(100% + 5px); width: 205px; padding: 0 10px;
+  background: #14221ef8; border: 1px solid #425448; border-radius: 8px; }
+.map-base-options .layer-row { min-height: 45px; }
+.map-base-options .layer-row:last-child { border: 0; }
+.operations h2 { font-size: 14px; letter-spacing: 0; }
+@media (min-width: 901px) {
+  .workspace-grid { grid-template-columns: 330px minmax(0, 1fr); }
+  .location { padding-top: 16px; padding-bottom: 12px; }
+  .location h1 { font-size: 28px; margin-bottom: 12px; }
+}
+.ops-scale { grid-template-columns: 1fr 1fr 1fr; }
+.ops-scale span:nth-of-type(2) { text-align: center; }
+.scene-caption { max-width: min(270px, 45%); }

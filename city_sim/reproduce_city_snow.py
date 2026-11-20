@@ -9,6 +9,21 @@ import time
 from urllib.request import Request, urlopen
 
 
+def matrix(base):
+    endpoint = "/api/v1/operations"
+    with urlopen(base + endpoint + "/city/catalog", timeout=30) as response:
+        city = json.load(response)
+    with urlopen(base + endpoint + "/atlas", timeout=30) as response:
+        atlas = json.load(response)
+    inputs = [{"source": "openweather", "valid_at": t["valid_at"]} for t in city["openweather"]]
+    inputs += [{"source": "reanalysis", "event_id": e["event_id"]} for e in city["storms"]]
+    if atlas["history"]["terms"]:
+        inputs.append({"source": "atlas_history", "valid_at": atlas["history"]["terms"][-1]})
+    inputs += [{"source": "manual", **row} for row in (
+        {"wind_speed_ms": 0}, {"snowfall_cm_h": 0}, {"wind_from_deg": 270}, {"wind_from_deg": 90})]
+    return inputs
+
+
 def run(base, payload, output):
     def read(path, data=None):
         body = json.dumps(data).encode() if data is not None else None
@@ -41,19 +56,23 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("out/citywide-snow"))
     parser.add_argument("--openweather", action="append", type=datetime.fromisoformat, default=[])
     parser.add_argument("--event", action="append", default=[])
+    parser.add_argument("--matrix", action="store_true", help="Run every archived OpenWeather term, all storms and controls.")
     args = parser.parse_args()
-    if not args.event and not args.openweather:
+    if not args.event and not args.openweather and not args.matrix:
         parser.error("Choose one or more --event or --openweather inputs.")
     args.output.mkdir(parents=True, exist_ok=True)
     inputs = [{"source": "openweather", "valid_at": t.isoformat()} for t in args.openweather]
     inputs += [{"source": "reanalysis", "event_id": event} for event in args.event]
+    base = args.url.rstrip("/")
+    if args.matrix:
+        inputs.extend(matrix(base))
     runs = []
     for payload in inputs:
-        replay = run(args.url.rstrip("/"), payload, args.output)
+        replay = run(base, payload, args.output)
         runs.append(replay)
         print(json.dumps({k: replay[k] for k in ("input", "run_id", "metrics", "content_sha256")},
                          ensure_ascii=False), flush=True)
-    (args.output / "manifest.json").write_text(json.dumps(runs, ensure_ascii=False, indent=2)+"\n")
+        (args.output / "manifest.json").write_text(json.dumps(runs, ensure_ascii=False, indent=2)+"\n")
 
 
 if __name__ == "__main__":

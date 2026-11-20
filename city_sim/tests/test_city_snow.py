@@ -1,9 +1,11 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import json
 import unittest
 
 from fastapi.testclient import TestClient
 import numpy as np
+from pydantic import ValidationError
 from shapely.geometry import Point
 
 from city_sim.api import make_app
@@ -55,3 +57,35 @@ class CitywideWeatherTests(unittest.TestCase):
         self.assertEqual(sampled[0, 3], 2)
         self.assertEqual(sampled[3, 3], 3)
         self.assertTrue(np.isnan(sampled[3, 0]))
+
+    def test_drawn_outline_rejects_crossing_and_clips_on_land(self):
+        corners = [(158.630, 53.028), (158.646, 53.028), (158.646, 53.040), (158.630, 53.040)]
+        with self.assertRaises(ValidationError):
+            CitySnowRequest(source="manual", zone=[corners[i] for i in (0, 2, 1, 3)])
+        with TemporaryDirectory() as folder:
+            app = make_app(db_path=Path(folder) / "fixture.sqlite")
+            runner = app.state.city_snow
+            outline = runner.domain(CitySnowRequest(source="manual", zone=corners))
+            district = runner.domain(CitySnowRequest(source="manual", district_id="center"))
+            self.assertTrue(runner.land.covers(outline.representative_point()))
+            self.assertLessEqual(outline.area, 0.016*0.012 + 1e-12)
+            self.assertTrue(district.covers(Point(158.644, 53.034)))
+
+    def test_cell_probe_respects_the_selected_hour_and_reports_neighbors(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            runner = CitySnow(SnowStudy(None, WeatherArchive(root)), root)
+            identifier = "f"*64
+            bounds = [158.6400, 53.0300, 158.6404, 53.0304]
+            (root / f"{identifier}.json").write_text(json.dumps({"bounds": bounds, "status": "completed"}))
+            final = np.array([[np.nan, 5.0], [4.0, 6.0]])
+            np.savez_compressed(root / f"{identifier}.npz", snow_cm=final, weather_snow=final-1,
+                                combined=final/10, opposite_snow_cm=final+1, timeline=[final/2])
+            first = runner.probe(identifier, 158.6403, 53.0303, frame=0)
+            self.assertEqual(first["snow_cm"], 2.5)
+            self.assertIsNone(first["weather_snow_cm"])
+            masked = runner.probe(identifier, 158.6401, 53.0303)
+            self.assertIsNone(masked["snow_cm"])
+            nearby = runner.probe(identifier, 158.6401, 53.0303, nearby_m=26)
+            self.assertEqual(nearby["snow_cm"], 5)
+            self.assertGreater(nearby["sample_distance_m"], 0)

@@ -64,12 +64,19 @@ function popup(map, coordinates, title, lines, sources = []) {
   new maplibregl.Popup({ maxWidth: '290px' }).setLngLat(coordinates).setDOMContent(content).addTo(map);
 }
 
-function installInteraction(map, buildingEvidence, buildingDetails) {
+function installInteraction(map, buildingEvidence, snowDetails) {
+  let popupRequest = 0;
   map.on('click', async event => {
-    const first = map.queryRenderedFeatures(event.point, { layers: ['structures', 'facilities', 'network', 'grades', 'topo-check', 'candidate-outline', 'streets', 'arterials'] })[0];
+    if (map.getCanvas().dataset.drawing === 'true') return;
+    const token = ++popupRequest;
+    const first = map.queryRenderedFeatures(event.point, { layers: ['structures', 'facilities', 'network', 'grades', 'topo-check', 'candidate-outline', 'streets', 'arterials', 'weather-arrows', 'weather-points'] })[0];
     const props = first?.properties;
     const where = event.lngLat;
-    if (first?.layer.id === 'structures') {
+    const snow = await snowDetails(where, first?.layer.id === 'structures' || Boolean(props?.edge_id));
+    if (token !== popupRequest) return;
+    if (first?.layer.id === 'weather-arrows' || first?.layer.id === 'weather-points') {
+      popup(map, where, props.name, [props.reading, props.wind, props.gust, props.distance, ...snow].filter(Boolean));
+    } else if (first?.layer.id === 'structures') {
       const lines = [HEIGHT_NAMES[props.height_source]];
       const sources = [];
       if (props.height_source === 'unknown') lines.push(`Условная высота на карте · ${format(props.render_height_m)} м`);
@@ -102,7 +109,7 @@ function installInteraction(map, buildingEvidence, buildingDetails) {
         if (url) sources.push(['GlobalBuildingAtlas', url]);
       }
       popup(map, where, props.name || props.address || 'Здание',
-        [...lines, ...buildingDetails(props.asset_id), props.asset_id], sources);
+        [...snow, ...lines, props.asset_id], sources);
     } else if (first?.layer.id === 'facilities') {
       popup(map, where, props.name || ASSET_NAMES[props.kind] || 'Объект инфраструктуры',
         [ASSET_NAMES[props.kind] || props.kind, props.object_id]);
@@ -124,10 +131,12 @@ function installInteraction(map, buildingEvidence, buildingDetails) {
       const sameRoad = [...new Map(direction.map(f => [f.properties.edge_id, f.properties])).values()];
       const lines = sameRoad.map(edge => edge.slope_pct == null ? edge.edge_id : `${edge.edge_id} · ${format(edge.slope_pct)}%`);
       popup(map, where, props.road_name || 'Участок дороги', [
-        `Длина · ${format(props.length_m, 0)} м`, ...lines,
+        ...snow, `Длина · ${format(props.length_m, 0)} м`, ...lines,
         ...(props.network_extension ? ['Расширение графа из OpenStreetMap · зимний допуск не проверен'] : []),
         ...(props.relief_quality === 'shorter_than_grid' ? ['Дуга короче шага DSM'] : [])
       ]);
+    } else if (snow.length) {
+      popup(map, where, 'Снег в этой точке', snow);
     } else {
       try {
         const info = await request(`/city/elevation?lon=${where.lng}&lat=${where.lat}`);
@@ -139,6 +148,27 @@ function installInteraction(map, buildingEvidence, buildingDetails) {
       }
     }
   });
+}
+
+function weatherArrow() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 40;
+  const ctx = canvas.getContext('2d');
+  ctx.beginPath();
+  ctx.moveTo(20, 33);
+  ctx.lineTo(20, 8);
+  ctx.moveTo(10, 18);
+  ctx.lineTo(20, 8);
+  ctx.lineTo(30, 18);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#132026';
+  ctx.lineWidth = 8;
+  ctx.stroke();
+  ctx.strokeStyle = '#ecffff';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  return ctx.getImageData(0, 0, 40, 40);
 }
 
 function installDataLoading(map, metadata) {
@@ -197,7 +227,7 @@ function installDataLoading(map, metadata) {
   return load;
 }
 
-export function createMap(metadata, onAreaChange, buildingDetails) {
+export function createMap(metadata, onAreaChange, snowDetails) {
   const { bbox } = metadata;
   const [first] = areas;
   const map = new maplibregl.Map({
@@ -285,12 +315,16 @@ export function createMap(metadata, onAreaChange, buildingDetails) {
     for (const id of ['buildings', 'roads', 'assets', 'scenario-boundary', 'audit', 'candidates']) {
       map.addSource(id, { type: 'geojson', data: empty() });
     }
-    map.addSource('operations-snow', { type: 'image',
-      url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
-      coordinates: [[158.60, 53.04], [158.64, 53.04], [158.64, 53.02], [158.60, 53.02]] });
+    for (const id of ['operations-atlas', 'operations-snow']) {
+      map.addSource(id, { type: 'image',
+        url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+        coordinates: [[158.60, 53.04], [158.64, 53.04], [158.64, 53.02], [158.60, 53.02]] });
+    }
+    map.addLayer({ id: 'operations-atlas', type: 'raster', source: 'operations-atlas',
+      layout: { visibility: 'none' }, paint: { 'raster-opacity': .48, 'raster-fade-duration': 0 } });
     map.addLayer({ id: 'operations-snow', type: 'raster', source: 'operations-snow',
       layout: { visibility: 'none' }, paint: { 'raster-opacity': .82, 'raster-fade-duration': 0,
-        'raster-resampling': 'nearest' } });
+        'raster-resampling': 'linear' } });
     map.addLayer({ id: 'network', type: 'line', source: 'roads', layout: { 'line-cap': 'round' },
       paint: { 'line-color': ['case', ['==', ['get', 'network_extension'], true], '#8cc9ce',
         ['match', ['get', 'road_class'], ['primary', 'secondary', 'tertiary'], '#fce1a0', '#dbccaa']],
@@ -323,6 +357,23 @@ export function createMap(metadata, onAreaChange, buildingDetails) {
         'missing', '#9eabb0', 'priority', '#fff3c4', 'extrapolated', '#c2a6ec', '#a8d8b2'],
         'circle-radius': ['match', ['get', 'status'], 'priority', 4, 7],
         'circle-stroke-color': '#14241b', 'circle-stroke-width': 1.5 } });
+    map.addImage('wind-arrow', weatherArrow(), { pixelRatio: 2 });
+    for (const id of ['weather-points', 'weather-arrows', 'operations-zone']) {
+      map.addSource(id, { type: 'geojson', data: empty() });
+    }
+    map.addLayer({ id: 'operations-zone-fill', type: 'fill', source: 'operations-zone',
+      filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': '#abefd4', 'fill-opacity': .10 } });
+    map.addLayer({ id: 'operations-zone-outline', type: 'line', source: 'operations-zone',
+      filter: ['!=', ['geometry-type'], 'Point'], paint: { 'line-color': '#abefd4', 'line-width': 2.3 } });
+    map.addLayer({ id: 'operations-zone-points', type: 'circle', source: 'operations-zone',
+      filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': 4, 'circle-color': '#e3fff5',
+        'circle-stroke-color': '#20392e', 'circle-stroke-width': 1.5 } });
+    map.addLayer({ id: 'weather-points', type: 'circle', source: 'weather-points',
+      paint: { 'circle-color': '#a7e9ef', 'circle-radius': 3.5, 'circle-stroke-width': 1.5, 'circle-stroke-color': '#152329' } });
+    map.addLayer({ id: 'weather-arrows', type: 'symbol', source: 'weather-arrows',
+      layout: { 'icon-image': 'wind-arrow', 'icon-rotate': ['get', 'toward'],
+        'icon-size': ['interpolate', ['linear'], ['get', 'speed'], 0, .86, 15, 1.52],
+        'icon-rotation-alignment': 'map', 'icon-pitch-alignment': 'map', 'icon-padding': 5 } });
     for (const [name, coordinates, kind, minZoom] of LABELS) {
       const label = document.createElement('div');
       label.textContent = name;
@@ -349,12 +400,14 @@ export function createMap(metadata, onAreaChange, buildingDetails) {
       map.setTerrain($('terrain').checked ? { source: 'dem', exaggeration: 1 } : null);
       map.setLayoutProperty('hillshade', 'visibility', $('terrain').checked ? 'visible' : 'none');
     });
-    installInteraction(map, metadata.building_evidence ?? {}, buildingDetails);
+    installInteraction(map, metadata.building_evidence ?? {}, snowDetails);
     refresh().finally(resolve);
   }));
   map.on('error', event => {
     const message = event.error?.message;
-    if (message) $('scene-status').textContent = `Карта · ${message}`;
+    if (event.error?.name === 'AbortError' || message?.includes('signal is aborted')) return;
+    if (message) $('scene-status').textContent = message.includes('data:image/')
+      ? 'Карта · не удалось загрузить погодный слой' : `Карта · ${message.split('\n')[0].slice(0, 140)}`;
   });
   return {
     map, ready, locate,

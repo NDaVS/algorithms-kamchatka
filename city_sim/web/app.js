@@ -24,7 +24,7 @@ async function start() {
   const view = createMap(metadata, area => {
     scenarios?.setArea(area);
     operations?.setArea(area);
-  }, asset => operations?.buildingDetails(asset) || []);
+  }, (where, nearby) => operations?.snowDetails(where, nearby) || []);
   await view.ready;
   scenarios = createScenarios(view, health, metadata.data_revision);
   operations = createOperations(view, health);
