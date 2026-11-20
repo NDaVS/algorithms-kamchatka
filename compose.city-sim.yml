@@ -1,0 +1,23 @@
+name: kamchatka-city-sim
+services:
+  city-sim:
+    build:
+      context: .
+      dockerfile: Dockerfile.city-sim
+    ports:
+      - "127.0.0.1:8008:8008"
+    environment:
+      CITY_SIM_DB: /state/city-sim.sqlite3
+      CITY_SIM_WEATHER: /atlas-local/heatmaps
+      CITY_SIM_SOLVER_URL: ${CITY_SIM_SOLVER_URL:-}
+    volumes:
+      - city_sim_state:/state
+      - ./weather_coverage:/atlas-local:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/api/v1/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+volumes:
+  city_sim_state:

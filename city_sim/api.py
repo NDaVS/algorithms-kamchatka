@@ -1,0 +1,213 @@
+from contextlib import asynccontextmanager
+from functools import partial
+import logging
+import os
+from pathlib import Path
+from typing import Literal
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
+
+from .geodata import BOUNDS, DATA, PILOT, ROOT, CityData
+from .physics import HttpWindSolver, SolverNotConnected, UnavailableWindSolver, display_field, sample_assets, solver_request
+from .schema import (AssetFieldResult, CitySnapshot, Region, RunRecord, ScenarioCreate, ScenarioRecord, WeatherSample,
+                     WeatherSource, WindFieldResult, WindRequest)
+from .storage import Store
+from .terrain import Terrain
+from .weather import WeatherArchive
+
+log = logging.getLogger(__name__)
+PILOT_QUERY = ",".join(map(str, PILOT))
+
+
+def make_app(db_path=None, building_path=None, graph_path=None, solver=None, weather_path=None):
+    atlas = ROOT / "weather_coverage"
+    osm = atlas / "osm"
+    supplements = () if building_path else (
+        ROOT / "data/pkc/depot-east.osm.gz",
+        *(p for p in sorted(osm.glob("*.osm.gz")) if p.name not in {"city-boundary.osm.gz", "stops.osm.gz"}),
+    )
+    archive = WeatherArchive(Path(weather_path or os.getenv("CITY_SIM_WEATHER", atlas / "heatmaps")))
+    fallback_weather = WeatherArchive(archive.root.parent if archive.root.name == "heatmaps" else atlas)
+    city = CityData(
+        building_path or os.getenv("CITY_SIM_BUILDINGS", ROOT / "data/pkc/city.osm.gz"),
+        graph_path or os.getenv("CITY_SIM_GRAPH", ROOT / "data/pkc/city.osm.gz"),
+        supplements=supplements,
+        terrain=Terrain(),
+    )
+    store = Store(Path(db_path or os.getenv("CITY_SIM_DB", ROOT / "city_sim/.state/city_sim.sqlite3")))
+
+    @asynccontextmanager
+    async def lifespan(api):
+        await run_in_threadpool(city.metadata)
+        yield
+
+    api = FastAPI(title="Алгоритмы Камчатки · 3D", version="1.0.0", lifespan=lifespan)
+    api.add_middleware(GZipMiddleware, minimum_size=1200)
+    url = os.getenv("CITY_SIM_SOLVER_URL")
+    api.state.wind_solver = solver or (HttpWindSolver(url) if url else UnavailableWindSolver())
+    api.state.city = city
+    api.state.store = store
+
+    @api.get("/api/v1/health")
+    def health():
+        return {"status": "ok", "solver_connected": not isinstance(api.state.wind_solver, UnavailableWindSolver),
+                "terrain_loaded": bool(city.terrain.metadata)}
+
+    @api.get("/api/v1/city/metadata", response_model=CitySnapshot)
+    def metadata():
+        return city.metadata()
+
+    def parse_bbox(bbox):
+        try:
+            west, south, east, north = (float(value) for value in bbox.split(","))
+            region = Region(west=west, south=south, east=east, north=north)
+        except (ValueError, ValidationError) as error:
+            raise HTTPException(422, "Ожидаются west,south,east,north и размер до 0.08°.") from error
+        return region.west, region.south, region.east, region.north
+
+    @api.get("/api/v1/city/base")
+    def base():
+        city.data_revision
+        return city.osm_layers[1]
+
+    @api.get("/api/v1/city/buildings")
+    def buildings(bbox: str = Query(PILOT_QUERY)):
+        return city.buildings(parse_bbox(bbox))
+
+    @api.get("/api/v1/city/roads")
+    def roads(bbox: str = Query(PILOT_QUERY)):
+        return city.roads(parse_bbox(bbox))
+
+    @api.get("/api/v1/city/infrastructure")
+    def infrastructure(bbox: str = Query(PILOT_QUERY)):
+        return city.infrastructure(parse_bbox(bbox))
+
+    @api.get("/api/v1/city/height-audit")
+    def height_audit():
+        return FileResponse(DATA / "topo-audit.geojson", media_type="application/geo+json")
+
+    @api.get("/api/v1/city/elevation")
+    def elevation(lon: float = Query(ge=-180, le=180), lat: float = Query(ge=-90, le=90)):
+        city.data_revision
+        sample = float(city.terrain.sample(lon, lat))
+        return {"elevation_m": round(sample, 2) if sample == sample else None, "vertical_datum": "EGM2008"}
+
+    @api.get("/api/v1/tiles/{kind}/{z}/{x}/{y}.png")
+    def tile(kind: Literal["dem", "relief"], z: int, x: int, y: int):
+        city.data_revision
+        if not (8 <= z <= 15 and 0 <= x < 2**z and 0 <= y < 2**z and city.terrain.metadata):
+            raise HTTPException(404, "Тайл рельефа отсутствует.")
+        return Response(city.terrain.png(z, x, y, color=kind == "relief"), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=3600"})
+
+    @api.get("/api/v1/weather", response_model=list[WeatherSample])
+    def weather(lon: float = Query(ge=-180, le=180), lat: float = Query(ge=-90, le=90),
+                kind: Literal["forecast", "observation"] = "forecast"):
+        samples = archive.nearest(lon, lat, kind)
+        return samples or fallback_weather.nearest(lon, lat, kind)
+
+    @api.post("/api/v1/scenarios", status_code=201, response_model=ScenarioRecord)
+    def create_scenario(payload: ScenarioCreate):
+        region = payload.region
+        if not (BOUNDS[0] <= region.west < region.east <= BOUNDS[2]
+                and BOUNDS[1] <= region.south < region.north <= BOUNDS[3]):
+            raise HTTPException(422, "Расчётная область выходит за пределы городской сцены.")
+        if payload.weather.kind == "manual_scenario":
+            payload = payload.model_copy(update={"weather": WeatherSource()})
+        else:
+            key = payload.weather.sample_id
+            sample = archive.samples.get(key) or fallback_weather.samples.get(key)
+            if not sample or sample.weather.kind != payload.weather.kind or sample.wind != payload.wind:
+                raise HTTPException(422, "Параметры ветра должны совпадать с выбранной записью архива.")
+            payload = payload.model_copy(update={"weather": sample.weather})
+        return store.create_scenario(payload, city.data_revision)
+
+    @api.get("/api/v1/scenarios", response_model=list[ScenarioRecord])
+    def scenarios():
+        return store.list_scenarios()
+
+    @api.get("/api/v1/scenarios/{scenario_id}", response_model=ScenarioRecord)
+    def scenario(scenario_id: str):
+        item = store.get_scenario(scenario_id)
+        if item is None:
+            raise HTTPException(404, "Сценарий не найден.")
+        return item
+
+    def current_scenario(scenario_id):
+        item = scenario(scenario_id)
+        if item.data_revision != city.data_revision:
+            raise HTTPException(409, "Снимок города изменился. Сохраните новый сценарий.")
+        return item
+
+    @api.get("/api/v1/scenarios/{scenario_id}/solver-input", response_model=WindRequest)
+    def inputs(scenario_id: str):
+        return solver_request(current_scenario(scenario_id), city)
+
+    @api.post("/api/v1/scenarios/{scenario_id}/runs", status_code=201, response_model=RunRecord)
+    def run(scenario_id: str):
+        obj = current_scenario(scenario_id)
+        wind_solver = api.state.wind_solver
+        try:
+            if isinstance(wind_solver, UnavailableWindSolver):
+                raise SolverNotConnected("Аэродинамический решатель пока не подключён.")
+            request = solver_request(obj, city)
+            field = WindFieldResult.model_validate(wind_solver.calculate(request))
+            return store.create_run(scenario_id, "completed", result=field.model_dump(mode="json"))
+        except SolverNotConnected as error:
+            return store.create_run(scenario_id, "solver_not_connected", error=str(error))
+        except Exception:
+            log.exception("Wind run failed for %s", scenario_id)
+            return store.create_run(scenario_id, "failed", error="Ошибка решателя. Подробности в журнале сервера.")
+
+    @api.get("/api/v1/runs/{run_id}", response_model=RunRecord)
+    def get_run(run_id: str):
+        obj = store.get_run(run_id)
+        if obj is None:
+            raise HTTPException(404, "Расчёт не найден.")
+        return obj
+
+    def physical_result(run_id):
+        record = get_run(run_id)
+        if record.status != "completed" or not record.result:
+            raise HTTPException(404, "Расчётное поле отсутствует.")
+        field = WindFieldResult.model_validate(record.result)
+        if field.source_kind != "physical_solver":
+            raise HTTPException(404, "Доступны поля физического решателя.")
+        return record, field
+
+    @api.get("/api/v1/runs/{run_id}/field")
+    def field_view(run_id: str):
+        _, field = physical_result(run_id)
+        return display_field(field)
+
+    @api.get("/api/v1/runs/{run_id}/assets", response_model=AssetFieldResult)
+    def asset_fields(run_id: str):
+        record, field = physical_result(run_id)
+        obj = current_scenario(record.scenario_id)
+        graph_version, samples = sample_assets(city, obj.region, field)
+        return AssetFieldResult(
+            run_id=run_id, scenario_id=record.scenario_id, graph_version=graph_version,
+            reference_height_m=field.grid.reference_height_m, pressure_reference=field.pressure_reference,
+            samples=samples)
+
+    @api.get("/api/v1/scenarios/{scenario_id}/runs", response_model=list[RunRecord])
+    def runs(scenario_id: str):
+        scenario(scenario_id)
+        return store.list_runs(scenario_id)
+
+    web = Path(__file__).resolve().parent / "web"
+
+    @api.get("/", include_in_schema=False)
+    def index():
+        return FileResponse(web / "index.html")
+
+    api.mount("/static", StaticFiles(directory=web), name="static")
+    return api
+
+
+app = make_app()

@@ -16,3 +16,5 @@ out/
 /winter_audit/evidence/
 /winter_audit/output/
 .ipynb_checkpoints/
+
+/city_sim/.state/

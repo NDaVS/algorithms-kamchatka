@@ -1,0 +1,13 @@
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+COPY requirements-city-sim.txt ./
+RUN pip install --no-cache-dir -r requirements-city-sim.txt
+COPY city_sim ./city_sim
+COPY snowops ./snowops
+COPY winter_audit/__init__.py winter_audit/relief.py ./winter_audit/
+COPY weather_coverage/__init__.py weather_coverage/geography.py ./weather_coverage/
+COPY weather_coverage/osm ./weather_coverage/osm
+COPY data/pkc ./data/pkc
+EXPOSE 8008
+CMD ["python", "-m", "city_sim"]

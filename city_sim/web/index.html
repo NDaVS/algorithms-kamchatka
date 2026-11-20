@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Камчатка · 3D город</title>
+  <link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/maplibre-gl.js" defer></script>
+  <script src="/static/app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">◈</span>
+      <span>Алгоритмы <strong>Камчатки</strong></span>
+      <span class="brand-divider"></span>
+      <span class="workspace">3D город</span>
+    </div>
+    <div class="top-status"><span id="solver-dot"></span><span id="solver-status">Подключение к API</span></div>
+  </header>
+  <main class="workspace-grid">
+    <aside class="panel" aria-label="Управление картой и сценариями">
+      <div class="location">
+        <span>КАМЧАТСКИЙ КРАЙ</span>
+        <h1>Петропавловск-<br>Камчатский</h1>
+        <div class="location-controls">
+          <label class="sr-only" for="area">Район карты</label>
+          <select id="area"></select>
+          <button id="focus" type="button" title="Вернуться в выбранный район" aria-label="Вернуться в выбранный район">⌖</button>
+        </div>
+      </div>
+      <div class="tabs" aria-label="Разделы">
+        <button aria-pressed="true" aria-controls="layers-panel" type="button">Карта</button>
+        <button aria-pressed="false" aria-controls="scenario-panel" type="button">Сценарии</button>
+      </div>
+      <section id="layers-panel" class="panel-content">
+        <h2>Слои</h2>
+        <div class="layer-row"><span class="swatch terrain"></span><span>Рельеф DSM <small>Copernicus GLO‑30</small></span><input type="checkbox" id="terrain" checked aria-label="Рельеф DSM"></div>
+        <div class="layer-row"><span class="swatch buildings"></span><span>3D-здания <small>Контуры OpenStreetMap</small></span><input type="checkbox" id="buildings" checked aria-label="3D-здания"></div>
+        <div class="layer-row"><span class="swatch roads"></span><span>Дорожный граф <small>Направленные дуги SnowOps</small></span><input type="checkbox" id="roads" checked aria-label="Дорожный граф"></div>
+        <div class="layer-row"><span class="swatch assets"></span><span>Инфраструктура <small>Объекты OpenStreetMap</small></span><input type="checkbox" id="assets" aria-label="Инфраструктура"></div>
+        <div class="layer-row"><span class="swatch slopes"></span><span>Уклоны <small>Оценка зимнего аудита</small></span><input type="checkbox" id="slopes" aria-label="Уклоны"></div>
+        <div class="layer-row"><span class="swatch topo"></span><span>Сверка высот <small>Лист N‑57‑102 · издание 1990</small></span><input type="checkbox" id="topo" aria-label="Сверка высот"></div>
+        <div class="legend">
+          <h2>Высоты зданий</h2>
+          <div><i class="key known"></i> Высота из OSM</div>
+          <div><i class="key levels"></i> Оценка по этажности</div>
+          <div><i class="key unknown"></i> Условный объём</div>
+        </div>
+        <div class="metadata" id="metadata">Загрузка паспорта данных</div>
+      </section>
+      <section id="scenario-panel" class="panel-content" hidden>
+        <h2>Условия ветра</h2>
+        <form id="scenario-form">
+          <label>Название<input name="title" maxlength="120" placeholder="Западный ветер" required></label>
+          <label>Источник<select id="weather-kind"><option value="manual_scenario">Ручной сценарий</option><option value="forecast">Архив прогноза OpenWeather</option><option value="observation">Архив OpenWeather Current</option></select></label>
+          <label id="weather-row" hidden>Срок и точка<select id="weather-sample"></select></label>
+          <p id="weather-detail" class="secondary" hidden></p>
+          <div class="two-cols">
+            <label>Скорость, м/с<input name="speed" type="number" value="9" min="0" max="100" step="any" required></label>
+            <label>Откуда, °<input name="direction" type="number" value="270" min="0" max="359.999" step="any" required></label>
+          </div>
+          <div class="two-cols">
+            <label>Высота ветра, м<input name="height" type="number" value="10" min="0.1" step="any" required></label>
+            <label>Рыхлый снег<select name="snow"><option value="unknown">Неизвестно</option><option value="yes">Есть</option><option value="no">Нет</option></select></label>
+          </div>
+          <p id="scenario-zone" class="secondary"></p>
+          <button class="primary" id="save" type="submit">Сохранить сценарий</button>
+        </form>
+        <section class="saved">
+          <h2>Сохранённые сценарии</h2>
+          <select id="scenarios" aria-label="Сохранённые сценарии"></select>
+          <div class="two-cols actions">
+            <a class="button" id="export" hidden>JSON для решателя</a>
+            <button id="run" type="button" disabled>Рассчитать</button>
+          </div>
+          <p id="scenario-message" role="status" class="secondary"></p>
+          <label id="field-row" hidden>Физическое поле<select id="field-type"></select></label>
+          <p id="field-legend" class="secondary" hidden></p>
+        </section>
+      </section>
+    </aside>
+    <section class="scene" aria-label="Интерактивная карта Петропавловска-Камчатского">
+      <div id="map"></div>
+      <div class="map-tools">
+        <button id="view" type="button" aria-pressed="true" title="Переключить наклон карты">3D</button>
+      </div>
+      <div class="scene-caption" aria-live="polite">
+        <b id="scene-location">Центр · Култучное озеро</b>
+        <span id="coords">53.034° с. ш. · 158.645° в. д.</span>
+        <span id="scene-status"></span>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
