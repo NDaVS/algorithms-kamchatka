@@ -44,4 +44,4 @@ jobs:
           assert set(result["methods"]) == {"B0", "O1"}
           for method, plan in result["methods"].items():
               assert plan["routes"], f"{method} returned no routes"
-          PYv
+          PY
