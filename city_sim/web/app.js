@@ -3,6 +3,10 @@ import { createMap } from './map.js';
 import { createOperations } from './operations.js';
 import { createScenarios } from './scenarios.js';
 
+for (const button of document.querySelectorAll('[data-dialog]')) {
+  button.addEventListener('click', () => $(button.dataset.dialog).showModal());
+}
+
 async function start() {
   const [metadata, health] = await Promise.all([request('/city/metadata'), request('/health')]);
   $('solver-dot').classList.toggle('connected', health.snow_solver_connected || health.solver_connected);

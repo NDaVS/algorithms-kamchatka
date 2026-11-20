@@ -37,14 +37,11 @@ export function createWeatherLayers(map) {
   const field = $('atlas-field');
   const status = $('atlas-status');
   const display = () => field.value !== 'none';
-  const presets = Array.from(document.querySelectorAll('[data-weather]'));
   const sourceData = () => dataset === 'storm' ? catalog?.storms?.[eventId] : catalog?.[dataset];
   const menu = $('weather-menu');
   const tiles = $('weather-menu-tiles');
   const arrowsToggle = $('ops-wind-arrows');
-  const menuArrows = $('weather-menu-wind');
   const cloudsToggle = $('atlas-clouds');
-  const menuClouds = $('weather-menu-clouds');
 
   function choose(next) {
     field.value = field.value === next ? 'none' : next;
@@ -75,14 +72,9 @@ export function createWeatherLayers(map) {
   }
 
   function paint() {
-    for (const button of presets) {
-      button.setAttribute('aria-pressed', String(button.dataset.weather === field.value));
-    }
     for (const button of tiles.children) {
       button.setAttribute('aria-pressed', String(button.dataset.layer === field.value));
     }
-    menuArrows.checked = arrowsToggle.checked;
-    menuClouds.checked = cloudsToggle.checked;
     const showAtlas = atlas && display() && atlas.grid_cells > 0;
     map.setLayoutProperty('operations-atlas', 'visibility', showAtlas ? 'visible' : 'none');
     if (showAtlas) {
@@ -100,7 +92,7 @@ export function createWeatherLayers(map) {
     if (showClouds) raster(map, 'operations-clouds', clouds.bounds, clouds.overlay);
     const weather = result?.wind_frames?.[modelFrame ?? 0];
     const wind = weather?.points || atlas?.points || [];
-    const arrows = $('ops-wind-arrows').checked
+    const arrows = arrowsToggle.checked
       ? wind.filter(p => (p.wind_speed_ms ?? p.wind_speed) > .2 && (p.wind_from_deg ?? p.wind_deg) != null)
         .map(p => windFeature(p, weather ? 'Ветер на входе модели' : atlas.source))
       : [];
@@ -158,10 +150,7 @@ export function createWeatherLayers(map) {
   }
 
   field.addEventListener('change', refresh);
-  for (const button of presets) button.addEventListener('click', () => choose(button.dataset.weather));
-  menuArrows.addEventListener('change', () => { arrowsToggle.checked = menuArrows.checked; paint(); });
-  for (const toggle of [cloudsToggle, menuClouds]) toggle.addEventListener('change', () => {
-    cloudsToggle.checked = toggle.checked;
+  cloudsToggle.addEventListener('change', () => {
     paint();
     refresh();
   });
@@ -195,13 +184,10 @@ export function createWeatherLayers(map) {
           .map(([key, item]) => new Option(item.name, key)));
         field.value = previous in options ? previous : options.snow ? 'snow' : 'none';
         buildTiles(options);
-        for (const button of presets) button.disabled = !(button.dataset.weather in options);
       }
       paint();
-      for (const id of ['atlas-clouds-row', 'weather-menu-clouds-row']) {
-        $(id).hidden = !sourceData()?.fields.clouds;
-      }
-      for (const id of ['atlas-field-row', 'atlas-points-row', 'atlas-display-settings', 'weather-presets']) $(id).hidden = !source;
+      $('atlas-clouds-row').hidden = !sourceData()?.fields.clouds;
+      $('atlas-display-settings').hidden = !source;
       refresh();
     },
     setResult(value) {

@@ -199,7 +199,10 @@ export function createOperations(view, health) {
       button.type = 'button';
       button.textContent = `${row.name || 'Сегмент дороги'} · ${format(row.value, 2)}`;
       button.title = row.edge_id;
-      button.addEventListener('click', () => map.easeTo({ center: [row.lon, row.lat], zoom: 16.2 }));
+      button.addEventListener('click', () => {
+        $('results-dialog').close();
+        map.easeTo({ center: [row.lon, row.lat], zoom: 16.2 });
+      });
       li.append(button);
       if (row.fresh_snow_cm != null) {
         const label = document.createElement('div');
@@ -217,6 +220,7 @@ export function createOperations(view, health) {
     modelFrame = undefined;
     busy = false;
     $('ops-snow-result').hidden = true;
+    $('ops-start-help').hidden = false;
     resultStatus.textContent = health.snow_solver_connected ? '' : 'Расчёт снега Данила не подключён.';
     weather.setResult(undefined);
     updateButton();
@@ -260,7 +264,7 @@ export function createOperations(view, health) {
       const resumeModel = changed && calculated?.input.source === 'live';
       catalog.live = data;
       weather.setCatalog(catalog);
-      $('ops-live-state').textContent = `Обновлено ${time(data.retrieved_at)} · модельный прогноз`;
+      $('ops-live-state').textContent = `Open-Meteo · ${time(data.retrieved_at)}`;
       setTerms(!resumeModel);
       if (resumeModel && !$('ops-calculate').disabled) $('ops-form').requestSubmit();
     } catch (error) {
@@ -496,6 +500,7 @@ export function createOperations(view, health) {
       layer.querySelector('[value="weather_distance"]').hidden = result.source.kind === 'manual';
       if (!preserve) layer.value = 'snow_cm';
       $('ops-snow-result').hidden = false;
+      $('ops-start-help').hidden = true;
       const count = m.computed_tiles ?? 0;
       const label = ({ one: 'участок', few: 'участка' })[plural.select(count)] || 'участков';
       const dates = result.source.kind === 'reanalysis'

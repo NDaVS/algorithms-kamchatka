@@ -231,6 +231,15 @@ export function createScenarios(view, health, revision) {
   kind.addEventListener('change', () => weatherOptions());
   sampleSelect.addEventListener('change', selectSample);
   fieldType.addEventListener('change', drawField);
+  const settings = $('wind-settings-dialog');
+  const height = form.elements.height;
+  height.addEventListener('invalid', () => {
+    if (!settings.open) settings.showModal();
+    height.focus();
+  });
+  settings.querySelector('.dialog-actions').addEventListener('submit', event => {
+    if (!height.reportValidity()) event.preventDefault();
+  });
   document.querySelectorAll('.tabs button').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('.tabs button').forEach(tab => {
       const selected = tab === button;
