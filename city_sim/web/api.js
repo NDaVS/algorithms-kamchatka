@@ -1,5 +1,5 @@
 export async function request(path, data) {
-  const response = await fetch('/api/v1' + path, data === undefined ? {} : {
+  const response = await fetch('/api/v1' + path, data === undefined ? { cache: 'no-store' } : {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)

@@ -1,5 +1,6 @@
 import { $, empty, format, request } from './api.js';
-import { createWeatherLayers, localTerm as time, raster } from './weather_layers.js';
+import { createWeatherLayers, localTerm as time } from './weather_layers.js';
+import { raster } from './raster_motion.js';
 import { createSnowVolume } from './snow_volume.js';
 
 const titles = {
@@ -226,7 +227,7 @@ export function createOperations(view, health) {
     updateTimeline();
   }
 
-  function setTerms() {
+  function setTerms(preview = true) {
     const dataset = atlasDataset();
     const previously = term.value;
     const times = weatherCatalog(dataset)?.terms || [];
@@ -239,23 +240,23 @@ export function createOperations(view, health) {
       const now = Date.parse(catalog.live.retrieved_at);
       term.selectedIndex = Math.max(0, times.findIndex(t => Date.parse(t) >= now));
     }
-    selectWeather();
+    if (preview) selectWeather();
+    else { updateButton(); updateTimeline(); }
   }
 
-  async function updateLive() {
+  async function updateLive(force = false) {
     const requestId = ++weatherRequest;
     $('ops-live-refresh').disabled = true;
     $('ops-live-state').textContent = 'Получаю прогноз…';
     try {
-      const data = await request('/operations/atlas/live');
+      const data = await request(force ? '/operations/atlas/live?refresh=true' : '/operations/atlas/live');
       if (requestId !== weatherRequest || source.value !== 'live') return;
       const changed = catalog.live?.sha256 && catalog.live.sha256 !== data.sha256;
       const resumeModel = changed && calculated?.input.source === 'live';
       catalog.live = data;
       weather.setCatalog(catalog);
-      if (changed) resetSnow();
       $('ops-live-state').textContent = `Обновлено ${time(data.retrieved_at)} · модельный прогноз`;
-      setTerms();
+      setTerms(!resumeModel);
       if (resumeModel && !$('ops-calculate').disabled) $('ops-form').requestSubmit();
     } catch (error) {
       if (requestId === weatherRequest) $('ops-live-state').textContent = error.message;
@@ -305,7 +306,7 @@ export function createOperations(view, health) {
       if (atlasDataset()) {
         if (source.value === 'historic') term.value = calculated.wind_frames[index].valid_at;
         weather.setWeather(atlasDataset(), calculated.wind_frames[index].valid_at,
-          source.value === 'historic' ? stormId() : undefined);
+          source.value === 'historic' ? stormId() : undefined, calculated.source.atlas_sha256);
       }
       updateTimeline();
       paint();
@@ -354,7 +355,7 @@ export function createOperations(view, health) {
   });
   source.addEventListener('change', updateInput);
   $('ops-event').addEventListener('change', () => { pause(); resetSnow(); setTerms(); });
-  $('ops-live-refresh').addEventListener('click', updateLive);
+  $('ops-live-refresh').addEventListener('click', () => updateLive(true));
   setInterval(() => { if (source.value === 'live' && !busy && !player) updateLive(); }, 20*60*1000);
   for (const button of document.querySelectorAll('[data-model]')) button.addEventListener('click', () => {
     layer.value = button.dataset.model;
@@ -366,7 +367,7 @@ export function createOperations(view, health) {
       modelFrame = calculated.wind_frames.length-1;
       weather.setFrame(modelFrame);
       if (atlasDataset()) weather.setWeather(atlasDataset(), calculated.wind_frames[modelFrame].valid_at,
-        source.value === 'historic' ? stormId() : undefined);
+        source.value === 'historic' ? stormId() : undefined, calculated.source.atlas_sha256);
       updateTimeline();
     }
     paint();
@@ -459,11 +460,12 @@ export function createOperations(view, health) {
     event.preventDefault();
     if ($('ops-calculate').disabled) return;
     pause();
-    resetSnow();
+    const preserve = source.value === 'live' && calculated?.input.source === 'live';
+    if (!preserve) resetSnow();
     const token = ++snowRequest;
     busy = true;
     updateButton();
-    resultStatus.textContent = 'Готовлю расчёт снега…';
+    resultStatus.textContent = preserve ? 'Пересчитываю снег по новому прогнозу…' : 'Готовлю расчёт снега…';
     const payload = {
       source: { archive: 'openweather', 'atlas-history': 'atlas_history', historic: 'reanalysis',
         live: 'live', manual: 'manual' }[source.value]
@@ -490,10 +492,10 @@ export function createOperations(view, health) {
       if (result.input.source === 'live' || result.input.source === 'reanalysis') {
         if (source.value === 'historic') term.value = result.wind_frames[modelFrame].valid_at;
         weather.setWeather(atlasDataset(), result.wind_frames[modelFrame].valid_at,
-          source.value === 'historic' ? stormId() : undefined);
+          source.value === 'historic' ? stormId() : undefined, result.source.atlas_sha256);
       }
       layer.querySelector('[value="weather_distance"]').hidden = result.source.kind === 'manual';
-      layer.value = 'snow_cm';
+      if (!preserve) layer.value = 'snow_cm';
       $('ops-snow-result').hidden = false;
       const count = m.computed_tiles ?? 0;
       const label = ({ one: 'участок', few: 'участка' })[plural.select(count)] || 'участков';
@@ -548,6 +550,9 @@ export function createOperations(view, health) {
   request('/operations/atlas').then(data => {
     catalog = data;
     weather.setCatalog(catalog);
+    if (source.value === 'archive' && !data.forecast.terms.length) {
+      source.value = 'historic';
+    }
     updateInput();
   }).catch(error => { resultStatus.textContent = error.message; });
   request('/operations/city/catalog').then(data => {

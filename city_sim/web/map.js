@@ -1,3 +1,4 @@
+import { addMotionSource } from './raster_motion.js';
 import { $, empty, format, request } from './api.js';
 
 export const areas = [
@@ -330,16 +331,16 @@ export function createMap(metadata, onAreaChange, snowDetails) {
     for (const id of ['buildings', 'roads', 'assets', 'scenario-boundary', 'audit', 'candidates']) {
       map.addSource(id, { type: 'geojson', data: empty() });
     }
-    for (const id of ['operations-atlas', 'operations-snow']) {
-      map.addSource(id, { type: 'image',
-        url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
-        coordinates: [[158.60, 53.04], [158.64, 53.04], [158.64, 53.02], [158.60, 53.02]] });
+    for (const id of ['operations-atlas', 'operations-snow', 'operations-clouds']) {
+      addMotionSource(map, id);
     }
     map.addLayer({ id: 'operations-atlas', type: 'raster', source: 'operations-atlas',
       layout: { visibility: 'none' }, paint: { 'raster-opacity': .48, 'raster-fade-duration': 0 } });
     map.addLayer({ id: 'operations-snow', type: 'raster', source: 'operations-snow',
       layout: { visibility: 'none' }, paint: { 'raster-opacity': .82, 'raster-fade-duration': 0,
         'raster-resampling': 'linear' } });
+    map.addLayer({ id: 'operations-clouds', type: 'raster', source: 'operations-clouds',
+      layout: { visibility: 'none' }, paint: { 'raster-opacity': .48, 'raster-fade-duration': 0 } });
     map.addLayer({ id: 'network', type: 'line', source: 'roads', layout: { 'line-cap': 'round' },
       paint: { 'line-color': ['case', ['==', ['get', 'network_extension'], true], '#8cc9ce',
         ['match', ['get', 'road_class'], ['primary', 'secondary', 'tertiary'], '#fce1a0', '#dbccaa']],

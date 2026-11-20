@@ -1,18 +1,8 @@
 import { $, empty, format, request } from './api.js';
+import { raster } from './raster_motion.js';
 
 export const localTerm = value => new Intl.DateTimeFormat('ru', { timeZone: 'Asia/Kamchatka',
   day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
-
-const lastImages = new WeakMap();
-
-export function raster(map, id, bounds, url) {
-  const source = map.getSource(id);
-  const previous = lastImages.get(source);
-  if (previous?.url === url && previous.bounds === bounds) return;
-  const [w, s, e, n] = bounds;
-  source.updateImage({ url, coordinates: [[w, n], [e, n], [e, s], [w, s]] });
-  lastImages.set(source, { url, bounds });
-}
 
 function feature(coordinates, properties) {
   return { type: 'Feature', geometry: { type: 'Point', coordinates }, properties };
@@ -39,6 +29,8 @@ export function createWeatherLayers(map) {
   let catalog;
   let eventId;
   let atlas;
+  let clouds;
+  let forecastRevision;
   let result;
   let modelFrame;
   let token = 0;
@@ -51,6 +43,8 @@ export function createWeatherLayers(map) {
   const tiles = $('weather-menu-tiles');
   const arrowsToggle = $('ops-wind-arrows');
   const menuArrows = $('weather-menu-wind');
+  const cloudsToggle = $('atlas-clouds');
+  const menuClouds = $('weather-menu-clouds');
 
   function choose(next) {
     field.value = field.value === next ? 'none' : next;
@@ -88,6 +82,7 @@ export function createWeatherLayers(map) {
       button.setAttribute('aria-pressed', String(button.dataset.layer === field.value));
     }
     menuArrows.checked = arrowsToggle.checked;
+    menuClouds.checked = cloudsToggle.checked;
     const showAtlas = atlas && display() && atlas.grid_cells > 0;
     map.setLayoutProperty('operations-atlas', 'visibility', showAtlas ? 'visible' : 'none');
     if (showAtlas) {
@@ -100,6 +95,9 @@ export function createWeatherLayers(map) {
       $('atlas-scale-gradient').style.background = `linear-gradient(90deg,${colors.join(',')})`;
     }
     $('atlas-scale').hidden = !showAtlas;
+    const showClouds = Boolean(cloudsToggle.checked && clouds?.grid_cells);
+    map.setLayoutProperty('operations-clouds', 'visibility', showClouds ? 'visible' : 'none');
+    if (showClouds) raster(map, 'operations-clouds', clouds.bounds, clouds.overlay);
     const weather = result?.wind_frames?.[modelFrame ?? 0];
     const wind = weather?.points || atlas?.points || [];
     const arrows = $('ops-wind-arrows').checked
@@ -118,6 +116,7 @@ export function createWeatherLayers(map) {
     const epoch = ++token;
     if (!dataset || !stamp || !sourceData()) {
       atlas = undefined;
+      clouds = undefined;
       status.textContent = '';
       paint();
       return;
@@ -127,6 +126,21 @@ export function createWeatherLayers(map) {
       dataset, valid_at: stamp, field: name, method: $('atlas-method').value
     });
     if (eventId) params.set('event_id', eventId);
+    if (forecastRevision && dataset === 'live') params.set('revision', forecastRevision);
+    const haze = new URLSearchParams(params);
+    haze.set('field', 'clouds');
+    haze.set('haze', 'true');
+    const cloudUpdate = cloudsToggle.checked && sourceData().fields.clouds
+      ? request(`/operations/atlas/frame?${haze}`).then(frame => {
+        if (epoch !== token) return;
+        clouds = frame;
+        paint();
+      }).catch(() => {
+        if (epoch !== token) return;
+        clouds = undefined;
+        paint();
+      })
+      : Promise.resolve();
     try {
       const frame = await request(`/operations/atlas/frame?${params}`);
       if (epoch !== token) return;
@@ -140,11 +154,17 @@ export function createWeatherLayers(map) {
       status.textContent = error.message;
       paint();
     }
+    await cloudUpdate;
   }
 
   field.addEventListener('change', refresh);
   for (const button of presets) button.addEventListener('click', () => choose(button.dataset.weather));
   menuArrows.addEventListener('change', () => { arrowsToggle.checked = menuArrows.checked; paint(); });
+  for (const toggle of [cloudsToggle, menuClouds]) toggle.addEventListener('change', () => {
+    cloudsToggle.checked = toggle.checked;
+    paint();
+    refresh();
+  });
   menu.addEventListener('keydown', event => {
     if (event.key === 'Escape') {
       menu.open = false;
@@ -163,10 +183,11 @@ export function createWeatherLayers(map) {
 
   return {
     setCatalog(value) { catalog = value; },
-    setWeather(source, timestamp, storm) {
+    setWeather(source, timestamp, storm, revision = catalog?.live?.sha256) {
       const sourceChanged = source !== dataset || storm !== eventId;
-      if (sourceChanged || timestamp !== stamp) atlas = undefined;
+      if (sourceChanged) atlas = clouds = undefined;
       [dataset, stamp, eventId] = [source, timestamp, storm];
+      forecastRevision = revision;
       if (sourceChanged) {
         const previous = field.value;
         const options = sourceData()?.fields || {};
@@ -177,6 +198,9 @@ export function createWeatherLayers(map) {
         for (const button of presets) button.disabled = !(button.dataset.weather in options);
       }
       paint();
+      for (const id of ['atlas-clouds-row', 'weather-menu-clouds-row']) {
+        $(id).hidden = !sourceData()?.fields.clouds;
+      }
       for (const id of ['atlas-field-row', 'atlas-points-row', 'atlas-display-settings', 'weather-presets']) $(id).hidden = !source;
       refresh();
     },
