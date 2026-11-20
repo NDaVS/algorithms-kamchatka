@@ -119,6 +119,6 @@ a.button { text-decoration: none; text-align: center; }
 .terrain-attribution { display: block; color: #91a89d; margin-top: 8px; font-size: 10px; }
 
 @media (max-width: 740px) {
-  .maplibregl-ctrl-bottom-left .maplibregl-ctrl-scale { margin-bottom: 32px; }
-  .scene-caption { bottom: 59px; }
+  .maplibregl-ctrl-bottom-left .maplibregl-ctrl-scale { margin-bottom: 40px; }
+  .scene-caption { bottom: 67px; }
 }
