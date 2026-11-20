@@ -16,6 +16,7 @@ from .heatmap_maps import geometry_parts, interpolate
 
 W,H=1920,1080
 FPS=6
+WIND_FIELDS={"wind_speed","wind_gust","wind_deg"}
 MAP=(48,146,1300,998)
 BG="#0c151e"
 PANEL="#10202b"
@@ -77,6 +78,8 @@ class FrameRenderer:
     def __init__(self,model,source):
         self.model=model
         self.source=source
+        self.wind_order=sorted(range(len(model["points"])),
+                               key=lambda i:model["points"][i]["label_offset"] is None)
         self.history=source.startswith("Open-Meteo")
         left,top,right,bottom=MAP
         self.factor=min((right-left-140)/model["nx"],(bottom-top-32)/model["ny"])
@@ -160,7 +163,28 @@ class FrameRenderer:
             draw.text(end,label,fill=INK,stroke_fill="#0b151e",stroke_width=3,
                       font=font(17,True),anchor="lm" if dx>0 else "rm")
 
-    def draw_frame(self, field, spec, extent, values, epoch, index, total, out):
+    def wind_arrows(self,draw,headings,speeds):
+        occupied=set()
+        for index in self.wind_order:
+            heading,speed=headings[index],speeds[index]
+            if not np.isfinite(heading) or (np.isfinite(speed) and speed<0.3):
+                continue
+            x,y=self.screen(*self.model["points"][index]["xy"])
+            cell=x//48,y//48
+            if cell in occupied:
+                continue
+            occupied.add(cell)
+            angle=math.radians(float(heading))
+            dx,dy=math.sin(angle),-math.cos(angle)
+            start=(x+dx*5,y+dy*5)
+            tip=(x+dx*23,y+dy*23)
+            edge1=(tip[0]-dx*7+dy*5,tip[1]-dy*7-dx*5)
+            edge2=(tip[0]-dx*7-dy*5,tip[1]-dy*7+dx*5)
+            for color,width in (("#0c1823",5),(INK,2)):
+                draw.line([start,tip],fill=color,width=width)
+                draw.line([edge1,tip,edge2],fill=color,width=width)
+
+    def draw_frame(self, field, spec, extent, values, epoch, index, total, out, wind):
         label,units,_,palette=spec
         a,b=extent
         rgb=lut(palette)
@@ -179,17 +203,8 @@ class FrameRenderer:
             r=4 if known[i] else 2
             clr=tuple(int(v) for v in dot_colors[i]) if known[i] else "#738693"
             draw.ellipse((x-r,y-r,x+r,y+r),outline="#0c151e",width=1,fill=clr)
-        if field=="wind_deg":
-            for i,point in enumerate(self.model["points"]):
-                if not known[i] or point["label_offset"] is None:
-                    continue
-                x,y=self.screen(*point["xy"])
-                angle=math.radians(float(values[i]))
-                dx,dy=math.sin(angle),-math.cos(angle)
-                end=(x+dx*17,y+dy*17)
-                draw.line((x,y,*end),fill=INK,width=2)
-                draw.polygon([end,(end[0]-dx*6+dy*4,end[1]-dy*6-dx*4),
-                              (end[0]-dx*6-dy*4,end[1]-dy*6+dx*4)],fill=INK)
+        if wind is not None:
+            self.wind_arrows(draw,*wind)
         self.labels(draw)
         text(draw,(48,61),label,47,INK,True)
         text(draw,(1870,53),local_time(epoch).strftime("%d.%m.%Y   %H:%M"),42,INK,True,anchor="rt")
@@ -217,14 +232,14 @@ class FrameRenderer:
             text(draw,(x+frac*448,622),mark,18,MUTED,
                  anchor=("lt" if i==0 else "rt" if i==4 else "mt"))
         draw.line((x,666,1821,666),fill="#2e4958",width=1)
-        for y,clr,caption in [(709,ACCENT,"Значение OpenWeather в точке"),
+        for y,clr,caption in [(709,ACCENT,"Значение API в точке"),
                                (750,MASK,"Зона без опоры для интерполяции"),
                                (791,ROAD,"Основные дороги OSM")]:
             draw.ellipse((x,y,x+11,y+11),fill=clr)
             text(draw,(x+24,y-4),caption,19,MUTED)
         text(draw,(x,853),"Пространственная оценка IDW",22,INK,True)
         text(draw,(x,891),"До 1 км от опоры, по рабочей маске OSM",18,MUTED)
-        if field=="wind_deg":
+        if wind is not None:
             text(draw,(x,928),"Стрелка показывает, откуда дует ветер",18,MUTED)
         if not known.any():
             draw.rounded_rectangle((419,496,921,566),12,fill=PANEL,outline=EDGE,width=2)
@@ -244,6 +259,8 @@ def video_for(field, path, directory, series):
 def render_all(model, cube, extents, timestamps, *, fields=FIELDS, directory=OUT,
                series="forecast", source="OpenWeather Forecast"):
     rend=FrameRenderer(model,source)
+    names=list(fields)
+    headings,speeds=cube[names.index("wind_deg")],cube[names.index("wind_speed")]
     for index,(field,spec) in enumerate(fields.items()):
         path=directory/"frames"/field
         path.mkdir(parents=True,exist_ok=True)
@@ -252,7 +269,8 @@ def render_all(model, cube, extents, timestamps, *, fields=FIELDS, directory=OUT
                 frame.unlink()
         with ThreadPoolExecutor(max_workers=min(5,os.cpu_count() or 1)) as pool:
             work=[pool.submit(rend.draw_frame,field,spec,extents[field],cube[index,t],dt,t,len(timestamps),
-                              path/f"{t:03}.png") for t,dt in enumerate(timestamps)]
+                              path/f"{t:03}.png",(headings[t],speeds[t]) if field in WIND_FIELDS else None)
+                  for t,dt in enumerate(timestamps)]
             for item in work:
                 item.result()
         video_for(field,path,directory,series)
