@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Камчатка · 3D город</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/vendor/maplibre-gl.js" defer></script>
@@ -77,7 +78,6 @@
             <option value="uniform">Равномерный фон · индекс</option>
             <option value="snow_cm">Оценка свежего снега · см</option>
           </select>
-          <div class="ops-scale"><i></i><span id="ops-scale-start">0</span><span id="ops-scale-end">1</span></div>
           <p id="ops-roads-label" class="secondary"></p>
           <ol id="ops-roads"></ol>
           <details><summary>Контроль и чувствительность расчёта</summary><div class="ops-values" id="ops-snow-checks"></div></details>
@@ -136,6 +136,10 @@
     </aside>
     <section class="scene" aria-label="Интерактивная карта Петропавловска-Камчатского">
       <div id="map"></div>
+      <div class="scene-snow-legend" id="scene-snow-legend" hidden>
+        <b id="ops-scale-label">Индекс накопления</b>
+        <div class="ops-scale"><i></i><span id="ops-scale-start">0</span><span id="ops-scale-end">1</span></div>
+      </div>
       <div class="map-tools">
         <button id="view" type="button" aria-pressed="true" title="Переключить наклон карты. На сенсорном экране ведите двумя пальцами вверх или вниз.">3D</button>
       </div>

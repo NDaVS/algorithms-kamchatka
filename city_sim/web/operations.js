@@ -85,11 +85,17 @@ export function createOperations(view, health) {
     })));
     map.getSource('operations-points').setData(markers.length ? { ...empty(), features: markers } : empty());
     map.setLayoutProperty('operations-snow', 'visibility', visible ? 'visible' : 'none');
+    $('scene-snow-legend').hidden = !visible;
     if (!visible) return;
     const [w, s, e, n] = calculated.bounds;
     map.getSource('operations-snow').updateImage({
       url: calculated.overlays[choice], coordinates: [[w, n], [e, n], [e, s], [w, s]]
     });
+    $('ops-scale-label').textContent = ({
+      snow_cm: 'Модельная толщина свежего снега', terrain: 'Рельеф · индекс низины',
+      uniform: 'Равномерный фон', opposite: 'Противоположный ветер · индекс',
+      combined: 'Снег и рельеф · индекс'
+    })[choice];
     $('ops-scale-start').textContent = choice === 'snow_cm' ? '0 см' : '0';
     $('ops-scale-end').textContent = choice === 'snow_cm' ? '15+ см' : '1';
     $('ops-roads-label').textContent = choice === 'uniform' ? 'Равномерный фон · все сегменты имеют равный приоритет' :

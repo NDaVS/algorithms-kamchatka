@@ -48,7 +48,7 @@ def overlay(values):
     flag = np.isfinite(values)
     data = np.nan_to_num(values).clip(0, 1)
     colors = np.array([[38, 71, 94], [79, 148, 187], [255, 211, 132], [242, 105, 77]])
-    tone = np.stack([np.interp(data, [0, .33, .66, 1], channel) for channel in colors.T], axis=-1)
+    tone = np.stack([np.interp(data, [0, .12, .40, 1], channel) for channel in colors.T], axis=-1)
     rgba = np.dstack((tone, flag * (115 + data * 130))).astype("uint8")
     out = BytesIO()
     Image.fromarray(rgba).save(out, format="PNG")

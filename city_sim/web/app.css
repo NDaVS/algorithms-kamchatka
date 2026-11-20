@@ -145,7 +145,12 @@ a.button { text-decoration: none; text-align: center; }
 #ops-manual { display: grid; gap: 10px; }
 #ops-layer { margin-top: 5px; }
 .ops-scale { display: grid; grid-template-columns: 1fr 1fr; margin: 8px 0; font-size: 11px; color: var(--muted); }
-.ops-scale i { grid-column: 1 / -1; height: 5px; background: linear-gradient(90deg,#26475e,#4f94bb,#ffd384,#f2694d); }
+.ops-scale i { grid-column: 1 / -1; height: 5px; background: linear-gradient(90deg,#26475e 0%,#4f94bb 12%,#ffd384 40%,#f2694d 100%); }
 .ops-scale span:last-child { text-align: right; }
 #ops-roads { padding-left: 24px; font-size: 11px; color: var(--muted); }
 #ops-roads button { padding: 4px 7px; margin: 2px 0; color: inherit; }
+
+.scene-snow-legend { position: absolute; left: 12px; top: 12px; min-width: 140px;
+  color: #e7efeb; background: #14231fec; border: 1px solid #425449;
+  border-radius: 5px; padding: 8px 10px 4px; font-size: 11px; pointer-events: none; }
+.scene-snow-legend .ops-scale { margin: 6px 0 1px; }
