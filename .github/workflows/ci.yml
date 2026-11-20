@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Python tests and planner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Test starter
+        run: python -m unittest discover -s tests -v
+      - name: Test dispatcher and CLI scenarios
+        working-directory: shared/winter-dispatch
+        run: |
+          python -m unittest discover -s tests -v
+          for variant in normal road-closed vehicle-unavailable; do
+            python planner.py scenarios/demo-shift.json --variant "$variant" > /dev/null
+          done
+      - name: Install SnowOps dependencies
+        working-directory: shared/winter-dispatch
+        run: python -m pip install -r requirements-core.txt
+      - name: Calculate pilot plans
+        working-directory: shared/winter-dispatch
+        run: |
+          python - <<'PY'
+          from planning_bridge import calculate
+
+          result = calculate("base_snowfall", 42)
+          assert result["tasks"], "Pilot scenario has no tasks"
+          assert set(result["methods"]) == {"B0", "O1"}
+          for method, plan in result["methods"].items():
+              assert plan["routes"], f"{method} returned no routes"
+          PYv
