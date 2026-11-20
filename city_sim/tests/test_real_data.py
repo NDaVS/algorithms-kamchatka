@@ -105,6 +105,25 @@ class RealGeodataTests(unittest.TestCase):
                 self.assertNotEqual(east, inputs["request_hash"])
 
 
+    def test_city_graph_extends_audited_graph_in_zavoyko(self):
+        bbox = "158.654,52.945,158.697,52.977"
+        path = f"/api/v1/city/roads?bbox={bbox}"
+        base = self.client.get(path).json()
+        city = self.client.get(path + "&network=city").json()
+        self.assertNotEqual(base["metadata"]["graph_version"], city["metadata"]["graph_version"])
+        self.assertGreater(len(city["features"]), len(base["features"]))
+        street = [f for f in city["features"] if f["properties"]["road_name"] == "улица Петра Ильичёва"]
+        self.assertTrue(street)
+        self.assertTrue(all(f["properties"]["network_extension"] and
+                            f["properties"]["slope_pct"] is None for f in street))
+        self.assertEqual(len({f["id"] for f in city["features"]}), len(city["features"]))
+        core = self.app.state.city.graph_layers[0]
+        expanded = self.app.state.city.extended_graph_layers[0]
+        city_only_ways = {edge.way_id for edge in expanded.edges.values() if edge.edge_id not in core.edges}
+        # The inspection map retains this road's mapped slope and this road's speed sign as traversable geometry.
+        self.assertIn(129214933, city_only_ways)
+        self.assertIn(128466677, city_only_ways)
+
     def test_field_samples_keep_road_and_infrastructure_ids(self):
         region = Region(**PILOT)
         west, south, east, north = TO_METRIC.transform_bounds(

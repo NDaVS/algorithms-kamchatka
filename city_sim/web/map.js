@@ -125,6 +125,7 @@ function installInteraction(map, buildingEvidence, buildingDetails) {
       const lines = sameRoad.map(edge => edge.slope_pct == null ? edge.edge_id : `${edge.edge_id} · ${format(edge.slope_pct)}%`);
       popup(map, where, props.road_name || 'Участок дороги', [
         `Длина · ${format(props.length_m, 0)} м`, ...lines,
+        ...(props.network_extension ? ['Расширение графа из OpenStreetMap · зимний допуск не проверен'] : []),
         ...(props.relief_quality === 'shorter_than_grid' ? ['Дуга короче шага DSM'] : [])
       ]);
     } else {
@@ -150,7 +151,8 @@ function installDataLoading(map, metadata) {
     const key = `${layer}/${x}/${y}`;
     if (cache.has(key)) return cache.get(key);
     const bbox = [x, y, x + 1, y + 1].map(index => (step * index).toFixed(3));
-    const pending = request(`/city/${layer}?bbox=${bbox.join(',')}`).catch(error => {
+    const query = layer === 'roads' ? '&network=city' : '';
+    const pending = request(`/city/${layer}?bbox=${bbox.join(',')}${query}`).catch(error => {
       cache.delete(key);
       throw error;
     });
@@ -290,8 +292,8 @@ export function createMap(metadata, onAreaChange, buildingDetails) {
       layout: { visibility: 'none' }, paint: { 'raster-opacity': .82, 'raster-fade-duration': 0,
         'raster-resampling': 'nearest' } });
     map.addLayer({ id: 'network', type: 'line', source: 'roads', layout: { 'line-cap': 'round' },
-      paint: { 'line-color': ['match', ['get', 'road_class'],
-        ['primary', 'secondary', 'tertiary'], '#fce1a0', '#dbccaa'],
+      paint: { 'line-color': ['case', ['==', ['get', 'network_extension'], true], '#8cc9ce',
+        ['match', ['get', 'road_class'], ['primary', 'secondary', 'tertiary'], '#fce1a0', '#dbccaa']],
         'line-opacity': .71, 'line-width': ['interpolate', ['linear'], ['zoom'], 12.6, .6, 17, 2.5] } });
     map.addLayer({ id: 'grades', type: 'line', source: 'roads', layout: { visibility: 'none' },
       filter: ['!=', ['get', 'slope_pct'], null], paint: { 'line-color': SLOPE_COLORS, 'line-width': 3.2 } });
@@ -318,7 +320,7 @@ export function createMap(metadata, onAreaChange, buildingDetails) {
     map.addSource('operations-points', { type: 'geojson', data: empty() });
     map.addLayer({ id: 'operations-points', type: 'circle', source: 'operations-points',
       paint: { 'circle-color': ['match', ['get', 'status'], 'inspect', '#ffca80',
-        'missing', '#9eabb0', 'priority', '#fff3c4', '#a8d8b2'],
+        'missing', '#9eabb0', 'priority', '#fff3c4', 'extrapolated', '#c2a6ec', '#a8d8b2'],
         'circle-radius': ['match', ['get', 'status'], 'priority', 4, 7],
         'circle-stroke-color': '#14241b', 'circle-stroke-width': 1.5 } });
     for (const [name, coordinates, kind, minZoom] of LABELS) {

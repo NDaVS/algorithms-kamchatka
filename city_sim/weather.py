@@ -38,13 +38,15 @@ class WeatherArchive:
                     valid = datetime.fromisoformat(row["forecast_dt_utc"])
                     retrieved = datetime.fromisoformat(row["request_time_utc"])
                     sid = sha256(f"{revision}|{row['point_id']}|{valid}|{retrieved}".encode()).hexdigest()[:24]
+                    api_lon, api_lat = value("api_lon"), value("api_lat")
                     result[sid] = WeatherSample(
                         sample_id=sid, wind=Wind(speed_mps=speed, direction_from_deg=direction % 360),
                         weather=WeatherSource(
                             kind=kind, provider="OpenWeather", valid_at=valid, observed_at=valid if kind == "observation" else None,
                             retrieved_at=retrieved, data_revision=revision, sample_id=sid,
                             source_file=filename, raw_locator=row.get("raw_file"),
-                            coordinate_lon_lat=(value("lon"), value("lat"))),
+                            coordinate_lon_lat=(value("lon"), value("lat")),
+                            provider_coordinate_lon_lat=(api_lon, api_lat) if api_lon is not None and api_lat is not None else None),
                         point_id=row["point_id"], temperature_c=value("temp"),
                         gust_mps=value("wind_gust"), snow_mm_3h=value("snow_3h"),
                         snow_mm_1h=value("current_snow_mm_h"))

@@ -13,7 +13,7 @@ from shapely.geometry import LineString, Point, Polygon, box, mapping, shape
 from shapely.ops import unary_union
 from shapely.geometry.polygon import orient
 
-from snowops.osm import load_osm
+from snowops.osm import load_osm, load_osm_snapshots
 from weather_coverage.geography import read_osm, relation_polygon, tags
 from .building_evidence import BuildingEvidence, public_address
 from .terrain import BOUNDS, DATA
@@ -103,7 +103,7 @@ class CityData:
         signature = tuple((p.stat().st_size, p.stat().st_mtime_ns) if p.is_file() else None for p in paths)
         if self._revision_cache is None or self._revision_cache[0] != signature:
             if self._revision_cache:
-                for key in ("osm_layers", "graph_layers", "building_evidence_metadata", "building_candidate_layer"):
+                for key in ("osm_layers", "graph_layers", "extended_graph_layers", "building_evidence_metadata", "building_candidate_layer"):
                     self.__dict__.pop(key, None)
                 if self.terrain:
                     self.terrain.tiles.cache_clear()
@@ -236,23 +236,37 @@ class CityData:
     def graph_layers(self):
         if not self.graph_path.is_file():
             return None, Layer([]), Layer([])
-        graph = load_osm(self.graph_path)
+        return self._graph_layers(load_osm(self.graph_path))
+
+    @cached_property
+    def extended_graph_layers(self):
+        baseline = self.graph_layers[0]
+        if baseline is None or not self.supplements:
+            return self.graph_layers
+        paths = (self.graph_path, *(path for path in self.supplements if path.is_file()))
+        return self._graph_layers(load_osm_snapshots(paths), baseline)
+
+    def _graph_layers(self, graph, baseline=None):
         grades = {}
         if self.grade_path.exists():
             with gzip.open(self.grade_path, "rt") as stream:
                 audit = json.load(stream)
-            if audit["graph_version"] == graph.version:
+            if audit["graph_version"] == (baseline or graph).version:
                 grades = audit["edges"]
         roads = []
         for edge in graph.edges.values():
-            audit = grades.get(edge.edge_id, {})
+            original = baseline.edges.get(edge.edge_id) if baseline else edge
+            audited_geometry = original is not None and all(
+                graph.nodes[node] == (baseline or graph).nodes[node] for node in (edge.from_node, edge.to_node)
+            )
+            audit = grades.get(edge.edge_id, {}) if audited_geometry else {}
             roads.append(feature(LineString([graph.nodes[edge.from_node], graph.nodes[edge.to_node]]),
                                  edge.edge_id, edge_id=edge.edge_id, physical_road_id=edge.physical_road_id,
                                  road_class=edge.road_class, road_name=edge.name, length_m=edge.length_m,
                                  slope_pct=audit.get("grade_pct", edge.slope_pct),
                                  relief_quality=audit.get("quality"),
                                  surface_start_m=audit.get("start_m"), surface_end_m=audit.get("end_m"),
-                                 graph_version=graph.version))
+                                 graph_version=graph.version, network_extension=not audited_geometry))
         assets = [feature(Point(site.lon_lat), site.site_id,
                           object_id=site.site_id, kind=site.kind, name=site.name)
                   for site in graph.facilities]
@@ -262,11 +276,11 @@ class CityData:
         revision = self.data_revision
         return collection(self.osm_layers[0].query(bbox), source="OpenStreetMap", revision=revision, building_evidence=self.building_evidence_metadata)
 
-    def roads(self, bbox):
+    def roads(self, bbox, extended=False):
         self.data_revision
-        graph, roads, _ = self.graph_layers
+        graph, roads, _ = self.extended_graph_layers if extended else self.graph_layers
         return collection(roads.query(bbox), source="snowops.osm.load_osm",
-                          graph_version=graph.version if graph else None,
+                          graph_version=graph.version if graph else None, extended=extended,
                           status="ok" if graph else "source_missing")
 
     def infrastructure(self, bbox):

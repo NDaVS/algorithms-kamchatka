@@ -37,6 +37,7 @@
         <button aria-pressed="false" aria-controls="scenario-panel" type="button">Сценарии</button>
       </div>
       <section id="operations-panel" class="panel-content operations">
+        <div id="ops-district-weather">
         <h2>Погодная обстановка</h2>
         <label for="ops-period">Архивный срез</label>
         <select id="ops-period"><option value="evening">20.11 · 18:00 Камчатка</option><option value="night">20.11 · 22:00 Камчатка</option></select>
@@ -49,10 +50,20 @@
           <button id="ops-weather-json" type="button" disabled>Скачать JSON</button>
         </details>
         <hr>
+        </div>
         <h2>Приоритет проверки дорог</h2>
         <form id="ops-form">
+          <label>Область расчёта
+            <select id="ops-scope"><option value="district">Выбранный район</option><option value="city">Весь город</option></select>
+          </label>
           <label>Входные данные
-            <select id="ops-input"><option value="archive">Выбранный срок прогноза</option><option value="manual">Ручной сценарий</option></select>
+            <select id="ops-input"><option value="archive">Выбранный срок прогноза</option><option value="historic" hidden>Исторический циклон</option><option value="manual">Ручной сценарий</option></select>
+          </label>
+          <label id="ops-city-term-label" hidden>Срок сетки OpenWeather
+            <select id="ops-city-term"></select>
+          </label>
+          <label id="ops-event-label" hidden>Исторический эпизод
+            <select id="ops-event"></select>
           </label>
           <div id="ops-archive-input">
             <label>Снег / вода по объёму
@@ -77,6 +88,9 @@
             <option value="terrain">Только рельеф · индекс</option>
             <option value="uniform">Равномерный фон · индекс</option>
             <option value="snow_cm">Оценка свежего снега · см</option>
+            <option value="weather_snow" hidden>Снег по погодным данным · см</option>
+            <option value="weather_wind" hidden>Ветер по погодным данным · м/с</option>
+            <option value="weather_distance" hidden>Расстояние до погодной точки · км</option>
           </select>
           <p id="ops-roads-label" class="secondary"></p>
           <ol id="ops-roads"></ol>
@@ -88,7 +102,7 @@
         <h2>Слои</h2>
         <div class="layer-row"><span class="swatch terrain"></span><span>Рельеф DSM <small>Copernicus GLO‑30</small></span><input type="checkbox" id="terrain" checked aria-label="Рельеф DSM"></div>
         <div class="layer-row"><span class="swatch buildings"></span><span>3D-здания <small>Контуры OpenStreetMap</small></span><input type="checkbox" id="buildings" checked aria-label="3D-здания"></div>
-        <div class="layer-row"><span class="swatch roads"></span><span>Дорожный граф <small>Направленные дуги SnowOps</small></span><input type="checkbox" id="roads" checked aria-label="Дорожный граф"></div>
+        <div class="layer-row"><span class="swatch roads"></span><span>Дорожный граф <small>Голубые линии · расширение OSM</small></span><input type="checkbox" id="roads" checked aria-label="Дорожный граф"></div>
         <div class="layer-row"><span class="swatch assets"></span><span>Инфраструктура <small>Объекты OpenStreetMap</small></span><input type="checkbox" id="assets" aria-label="Инфраструктура"></div>
         <div class="layer-row"><span class="swatch slopes"></span><span>Уклоны <small>Оценка зимнего аудита</small></span><input type="checkbox" id="slopes" aria-label="Уклоны"></div>
         <div class="layer-row"><span class="swatch topo"></span><span>Сверка высот <small>Лист N‑57‑102 · издание 1990</small></span><input type="checkbox" id="topo" aria-label="Сверка высот"></div>

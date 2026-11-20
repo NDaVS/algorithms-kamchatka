@@ -12,7 +12,7 @@ async function start() {
   $('candidate-row').hidden = !evidence.location_check?.candidate_outlines;
   $('gba-legend').hidden = !metadata.heights.estimated_from_gba;
   $('metadata').textContent = [
-    `${format(metadata.building_count_total, 0)} зданий`, `${format(metadata.road_count_total, 0)} дуг`,
+    `${format(metadata.building_count_total, 0)} зданий`, `${format(metadata.road_count_total, 0)} дуг в исходном графе`,
     `${format(metadata.heights.osm_height ?? 0, 0)} зданий с тегом высоты`,
     evidence.register_matched && `${format(evidence.register_matched, 0)} адресов сверены с реестром`,
     evidence.location_check?.image_matches && `${format(evidence.location_check.image_matches, 0)} контуров совпали со снимками`,

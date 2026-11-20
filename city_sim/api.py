@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from .city_snow import CitySnow, CitySnowRequest
 from .geodata import BOUNDS, DATA, PILOT, ROOT, CityData
 from .physics import HttpWindSolver, SolverNotConnected, UnavailableWindSolver, display_field, sample_assets, solver_request
 from .schema import (AssetFieldResult, CitySnapshot, Region, RunRecord, ScenarioCreate, ScenarioRecord, WeatherSample,
@@ -56,6 +57,7 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
     api.state.city = city
     api.state.store = store
     snow_study = SnowStudy(city, archive)
+    city_snow = CitySnow(snow_study, store.path.parent / "citywide")
 
     @api.get("/api/v1/health")
     def health():
@@ -84,6 +86,41 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
+    @api.get("/api/v1/operations/city/catalog")
+    def city_snow_catalog():
+        return city_snow.catalog()
+
+    @api.post("/api/v1/operations/city/runs", status_code=202)
+    def submit_city_snow(payload: CitySnowRequest):
+        try:
+            return city_snow.submit(payload)
+        except FileNotFoundError as error:
+            raise HTTPException(503, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(429, str(error)) from error
+
+    @api.get("/api/v1/operations/city/runs/{run_id}")
+    def city_snow_status(run_id: str):
+        try:
+            result = city_snow.status(run_id)
+        except ValueError as error:
+            raise HTTPException(404, "Расчёт не найден.") from error
+        if result is None:
+            raise HTTPException(404, "Расчёт не найден.")
+        return result
+
+    @api.get("/api/v1/operations/city/runs/{run_id}/replay")
+    def download_city_snow(run_id: str):
+        try:
+            path = city_snow.replay_path(run_id)
+        except ValueError as error:
+            raise HTTPException(404, "Файл расчёта не найден.") from error
+        if not path.is_file():
+            raise HTTPException(404, "Файл расчёта не найден.")
+        return FileResponse(path, media_type="application/gzip", filename=f"city-snow-{run_id}.json.gz")
+
     @api.get("/api/v1/city/metadata", response_model=CitySnapshot)
     def metadata():
         return city.metadata()
@@ -110,8 +147,8 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
         return city.building_candidates(parse_bbox(bbox))
 
     @api.get("/api/v1/city/roads")
-    def roads(bbox: str = Query(PILOT_QUERY)):
-        return city.roads(parse_bbox(bbox))
+    def roads(bbox: str = Query(PILOT_QUERY), network: Literal["audit", "city"] = "audit"):
+        return city.roads(parse_bbox(bbox), extended=network == "city")
 
     @api.get("/api/v1/city/infrastructure")
     def infrastructure(bbox: str = Query(PILOT_QUERY)):

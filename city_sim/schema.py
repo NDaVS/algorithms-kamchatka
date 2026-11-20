@@ -38,6 +38,7 @@ class WeatherSource(BaseModel):
     retrieved_at: datetime | None = None
     interpolated: bool = False
     coordinate_lon_lat: tuple[float, float] | None = None
+    provider_coordinate_lon_lat: tuple[float, float] | None = None
 
 class ScenarioCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
