@@ -13,8 +13,10 @@ export const areas = [
 
 const HEIGHT_NAMES = {
   osm_height: 'Высота из OpenStreetMap',
-  estimated_from_levels_3m_per_level: 'Оценка по этажности',
-  unknown: 'Нет высоты в OSM'
+  estimated_from_levels_3m_per_level: 'Оценка по этажности OSM',
+  estimated_from_register_floors: 'Оценка по этажности городского реестра',
+  estimated_from_gba: 'Модельная высота GlobalBuildingAtlas',
+  unknown: 'Высота неизвестна'
 };
 const ASSET_NAMES = {
   hospital: 'Больница', clinic: 'Клиника', school: 'Школа', kindergarten: 'Детский сад',
@@ -40,7 +42,7 @@ function band(kind, bounds) {
     tiles: [location.origin + `/api/v1/tiles/${kind}/{z}/{x}/{y}.png`] };
 }
 
-function popup(map, coordinates, title, lines) {
+function popup(map, coordinates, title, lines, sources = []) {
   const content = document.createElement('div');
   content.className = 'popup-details';
   const heading = document.createElement('b');
@@ -51,21 +53,55 @@ function popup(map, coordinates, title, lines) {
     row.textContent = line;
     content.append(row);
   }
+  for (const [label, url] of sources) {
+    const link = document.createElement('a');
+    link.textContent = label;
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    content.append(link);
+  }
   new maplibregl.Popup({ maxWidth: '290px' }).setLngLat(coordinates).setDOMContent(content).addTo(map);
 }
 
-function installInteraction(map) {
+function installInteraction(map, buildingEvidence) {
   map.on('click', async event => {
-    const first = map.queryRenderedFeatures(event.point, { layers: ['structures', 'facilities', 'network', 'grades', 'topo-check', 'streets', 'arterials'] })[0];
+    const first = map.queryRenderedFeatures(event.point, { layers: ['structures', 'facilities', 'network', 'grades', 'topo-check', 'candidate-outline', 'streets', 'arterials'] })[0];
     const props = first?.properties;
     const where = event.lngLat;
     if (first?.layer.id === 'structures') {
       const lines = [HEIGHT_NAMES[props.height_source]];
-      if (props.height_source === 'unknown') lines.push(`На карте ${format(props.render_height_m)} м`);
-      else lines.push(`${format(props.height_m)} м · независимого обмера нет`);
-      if (props.levels) lines.push(`Этажность OSM · ${format(props.levels)}`);
-      if (props.height_flags && props.height_flags !== '[]') lines.push('Есть замечания к тегам высоты');
-      popup(map, where, props.name || 'Здание', [...lines, props.asset_id]);
+      const sources = [];
+      if (props.height_source === 'unknown') lines.push(`Условная высота на карте · ${format(props.render_height_m)} м`);
+      else lines.push(`Высота на карте · ${format(props.height_m)} м`);
+      if (props.height_low_m != null) {
+        lines.push(`Оценочный диапазон · ${format(props.height_low_m)}–${format(props.height_high_m)} м`);
+      }
+      if (props.address && props.name) lines.push(props.address);
+      if (props.construction_year) lines.push(`Год постройки · ${props.construction_year}`);
+      if (props.registered_floors) lines.push(`Этажей в реестре · ${props.registered_floors}`);
+      if (props.levels) lines.push(`Этажей в OSM · ${format(props.levels)}`);
+      if (props.model_height_m != null && props.height_source !== 'estimated_from_gba') {
+        lines.push(`Оценка GlobalBuildingAtlas · ${format(props.model_height_m)} м`);
+      }
+      if (props.location_overlap_iou != null) {
+        lines.push(`Контур по снимку · пересечение ${format(props.location_overlap_iou * 100, 0)}% по IoU`);
+        lines.push(`Смещение центров · ${format(props.location_center_offset_m)} м`);
+      }
+      if (props.data_kind === 'osm_via_overture') lines.push('Контур OSM из выпуска Overture');
+      if (props.height_flags && props.height_flags !== '[]') lines.push('Есть расхождения в сведениях о здании');
+      for (const [label, source, page] of [
+        ['Источник этажности', props.registered_floors_source, props.registered_floors_page],
+        ['Источник года постройки', props.construction_year_source, props.construction_year_page]
+      ]) {
+        const url = buildingEvidence.sources?.[source]?.url;
+        if (url && page) sources.push([label, `${url}#page=${page}`]);
+      }
+      if (props.model_height_m != null || props.location_source) {
+        const url = buildingEvidence.location_check?.url;
+        if (url) sources.push(['GlobalBuildingAtlas', url]);
+      }
+      popup(map, where, props.name || props.address || 'Здание', [...lines, props.asset_id], sources);
     } else if (first?.layer.id === 'facilities') {
       popup(map, where, props.name || ASSET_NAMES[props.kind] || 'Объект инфраструктуры',
         [ASSET_NAMES[props.kind] || props.kind, props.object_id]);
@@ -77,6 +113,8 @@ function installInteraction(map) {
         `В радиусе 60 м · ${format(props.nearby_min_m)}…${format(props.nearby_max_m)} м`,
         'N‑57‑102 · издание 1990 · местность 1987'
       ]);
+    } else if (first?.layer.id === 'candidate-outline') {
+      popup(map, where, 'Кандидат по снимку', ['GlobalBuildingAtlas · требуется ручная проверка контура']);
     } else if (first?.layer.id === 'streets' || first?.layer.id === 'arterials') {
       popup(map, where, props.name || 'Дорога OpenStreetMap', ['Картографическая линия OSM', first.id]);
     } else if (props?.edge_id) {
@@ -105,7 +143,7 @@ function installDataLoading(map, metadata) {
   const step = 0.025;
   const cache = new Map();
   let generation = 0;
-  const layers = { buildings: 'buildings', roads: 'roads', assets: 'infrastructure' };
+  const layers = { buildings: 'buildings', roads: 'roads', assets: 'infrastructure', candidates: 'building-candidates' };
 
   function getCell(layer, x, y) {
     const key = `${layer}/${x}/${y}`;
@@ -161,6 +199,7 @@ export function createMap(metadata, onAreaChange) {
   const [first] = areas;
   const map = new maplibregl.Map({
     container: 'map', center: first.camera, zoom: first.zoom, pitch: 57, bearing: -23,
+    touchPitch: true, cooperativeGestures: false,
     minZoom: 10.5, maxZoom: 19, maxPitch: 72, maxBounds: [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
     canvasContextAttributes: { antialias: true }, attributionControl: false,
     style: {
@@ -181,7 +220,15 @@ export function createMap(metadata, onAreaChange) {
     $('metadata').append(notice);
   }
   let area = first;
-  let tilt = true;
+  const viewButton = $('view');
+  function updatePitch() {
+    const pitch = map.getPitch();
+    viewButton.dataset.pitch = pitch.toFixed(1);
+    viewButton.textContent = pitch > 1 ? '3D' : '2D';
+    viewButton.setAttribute('aria-pressed', String(pitch > 1));
+  }
+  map.on('pitch', updatePitch);
+  updatePitch();
 
   const areaSelect = $('area');
   areaSelect.replaceChildren(...areas.map(item => new Option(item.label, item.id)));
@@ -189,17 +236,15 @@ export function createMap(metadata, onAreaChange) {
     areaSelect.value = item.id ?? '';
     const center = item.camera || item.center;
     $('scene-location').textContent = item.label;
-    map.easeTo({ center, zoom: item.zoom || 14, pitch: tilt ? 57 : 0, bearing: tilt ? -23 : 0, duration: 900 });
+    map.easeTo({ center, zoom: item.zoom || 14, pitch: map.getPitch(), bearing: map.getBearing(), duration: 900 });
     area = item;
     if (moved) onAreaChange(item);
   }
   areaSelect.addEventListener('change', () => locate(areas.find(item => item.id === areaSelect.value), true));
   $('focus').addEventListener('click', () => locate(area, false));
   $('view').addEventListener('click', () => {
-    tilt = !tilt;
-    $('view').textContent = tilt ? '3D' : '2D';
-    $('view').setAttribute('aria-pressed', String(tilt));
-    map.easeTo({ pitch: tilt ? 57 : 0, bearing: tilt ? -23 : 0, duration: 650 });
+    const use3D = map.getPitch() <= 1;
+    map.easeTo({ pitch: use3D ? 57 : 0, bearing: use3D ? -23 : 0, duration: 650 });
   });
 
   const ready = new Promise(resolve => map.once('load', () => {
@@ -234,7 +279,7 @@ export function createMap(metadata, onAreaChange) {
       paint: { 'line-color': '#e1cea0', 'line-opacity': .65,
         'line-width': ['interpolate', ['linear'], ['zoom'], 11, .7, 17, 3] } });
 
-    for (const id of ['buildings', 'roads', 'assets', 'scenario-boundary', 'audit']) {
+    for (const id of ['buildings', 'roads', 'assets', 'scenario-boundary', 'audit', 'candidates']) {
       map.addSource(id, { type: 'geojson', data: empty() });
     }
     map.addLayer({ id: 'network', type: 'line', source: 'roads', layout: { 'line-cap': 'round' },
@@ -243,10 +288,13 @@ export function createMap(metadata, onAreaChange) {
         'line-opacity': .71, 'line-width': ['interpolate', ['linear'], ['zoom'], 12.6, .6, 17, 2.5] } });
     map.addLayer({ id: 'grades', type: 'line', source: 'roads', layout: { visibility: 'none' },
       filter: ['!=', ['get', 'slope_pct'], null], paint: { 'line-color': SLOPE_COLORS, 'line-width': 3.2 } });
+    map.addLayer({ id: 'candidate-outline', type: 'line', source: 'candidates', layout: { visibility: 'none' },
+      paint: { 'line-color': '#8de4ff', 'line-width': 1.5, 'line-dasharray': [2, 2] } });
     map.addLayer({ id: 'structures', type: 'fill-extrusion', source: 'buildings',
       paint: {
         'fill-extrusion-color': ['match', ['get', 'height_source'], 'osm_height', '#f1dca9',
-          'estimated_from_levels_3m_per_level', '#c6a994', '#8fa59c'],
+          'estimated_from_register_floors', '#b9d8a6',
+          'estimated_from_levels_3m_per_level', '#c6a994', 'estimated_from_gba', '#9ebdcb', '#8fa59c'],
         'fill-extrusion-height': ['get', 'render_height_m'], 'fill-extrusion-base': 0,
         'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': true
       } });
@@ -273,7 +321,7 @@ export function createMap(metadata, onAreaChange) {
       map.setLayoutProperty('topo-check', 'visibility', visible ? 'visible' : 'none');
     });
     for (const [box, layer] of Object.entries({ buildings: 'structures', roads: ['network', 'arterials', 'streets'],
-      assets: 'facilities', slopes: 'grades' })) {
+      assets: 'facilities', slopes: 'grades', candidates: 'candidate-outline' })) {
       $(box).addEventListener('change', () => {
         for (const id of [layer].flat()) map.setLayoutProperty(id, 'visibility', $(box).checked ? 'visible' : 'none');
         refresh();
@@ -283,7 +331,7 @@ export function createMap(metadata, onAreaChange) {
       map.setTerrain($('terrain').checked ? { source: 'dem', exaggeration: 1 } : null);
       map.setLayoutProperty('hillshade', 'visibility', $('terrain').checked ? 'visible' : 'none');
     });
-    installInteraction(map);
+    installInteraction(map, metadata.building_evidence ?? {});
     refresh().finally(resolve);
   }));
   map.on('error', event => {

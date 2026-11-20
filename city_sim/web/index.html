@@ -42,10 +42,13 @@
         <div class="layer-row"><span class="swatch assets"></span><span>Инфраструктура <small>Объекты OpenStreetMap</small></span><input type="checkbox" id="assets" aria-label="Инфраструктура"></div>
         <div class="layer-row"><span class="swatch slopes"></span><span>Уклоны <small>Оценка зимнего аудита</small></span><input type="checkbox" id="slopes" aria-label="Уклоны"></div>
         <div class="layer-row"><span class="swatch topo"></span><span>Сверка высот <small>Лист N‑57‑102 · издание 1990</small></span><input type="checkbox" id="topo" aria-label="Сверка высот"></div>
+        <div id="candidate-row" class="layer-row" hidden><span class="swatch candidates"></span><span>Кандидаты по снимкам <small>Контуры для ручной проверки</small></span><input type="checkbox" id="candidates" aria-label="Кандидаты по снимкам"></div>
         <div class="legend">
           <h2>Высоты зданий</h2>
           <div><i class="key known"></i> Высота из OSM</div>
-          <div><i class="key levels"></i> Оценка по этажности</div>
+          <div><i class="key register"></i> Оценка по этажности реестра</div>
+          <div><i class="key levels"></i> Оценка по этажности OSM</div>
+          <div id="gba-legend" hidden><i class="key model"></i> Модельная высота по снимкам</div>
           <div><i class="key unknown"></i> Условный объём</div>
         </div>
         <div class="metadata" id="metadata">Загрузка паспорта данных</div>
@@ -84,7 +87,7 @@
     <section class="scene" aria-label="Интерактивная карта Петропавловска-Камчатского">
       <div id="map"></div>
       <div class="map-tools">
-        <button id="view" type="button" aria-pressed="true" title="Переключить наклон карты">3D</button>
+        <button id="view" type="button" aria-pressed="true" title="Переключить наклон карты. На сенсорном экране ведите двумя пальцами вверх или вниз.">3D</button>
       </div>
       <div class="scene-caption" aria-live="polite">
         <b id="scene-location">Центр · Култучное озеро</b>

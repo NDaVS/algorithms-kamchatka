@@ -38,6 +38,26 @@ class RealGeodataTests(unittest.TestCase):
         self.assertGreater(len(roads["features"]), 2000)
         self.assertTrue(any(road["properties"]["slope_pct"] is not None for road in roads["features"]))
 
+    def test_municipal_floors_and_overture_provenance(self):
+        data = self.client.get("/api/v1/city/metadata").json()
+        evidence = data["building_evidence"]
+        self.assertEqual(evidence["overture"]["added"], 5584)
+        self.assertEqual(evidence["register_addresses"], 582)
+        self.assertGreater(evidence["register_matched"], 400)
+        self.assertEqual(evidence["register_with_floors"], 397)
+        buildings = self.app.state.city.osm_layers[0].features
+        features = {item["id"]: item["properties"] for item in buildings}
+        house = features["osm:way:406692020"]
+        self.assertEqual(house["construction_year"], 1970)
+        self.assertEqual(house["registered_floors"], 5)
+        self.assertEqual(house["render_height_m"], 15)
+        self.assertIsNone(house["physical_height_m"])
+        self.assertFalse(house["height_verified"])
+        self.assertEqual(len(features), len(buildings))
+        response = self.client.get("/api/v1/city/building-candidates")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["metadata"]["status"], "unverified_candidate_outlines")
+
     def test_terrain_rgb_and_cross_tile_seam(self):
         terrain = Terrain()
         self.assertGreater(float(terrain.sample(158.63856, 53.04342)), 350)

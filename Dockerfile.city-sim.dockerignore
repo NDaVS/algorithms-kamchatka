@@ -1,7 +1,8 @@
 **
 !city_sim/
-!city_sim/**
-city_sim/.state/
+!city_sim/*.py
+!city_sim/data/
+!city_sim/data/**
 !snowops/
 !snowops/*.py
 !winter_audit/

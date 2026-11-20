@@ -38,6 +38,7 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
         graph_path or os.getenv("CITY_SIM_GRAPH", ROOT / "data/pkc/city.osm.gz"),
         supplements=supplements,
         terrain=Terrain(),
+        building_evidence=building_path is None,
     )
     store = Store(Path(db_path or os.getenv("CITY_SIM_DB", ROOT / "city_sim/.state/city_sim.sqlite3")))
 
@@ -78,6 +79,10 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
     @api.get("/api/v1/city/buildings")
     def buildings(bbox: str = Query(PILOT_QUERY)):
         return city.buildings(parse_bbox(bbox))
+
+    @api.get("/api/v1/city/building-candidates")
+    def building_candidates(bbox: str = Query(PILOT_QUERY)):
+        return city.building_candidates(parse_bbox(bbox))
 
     @api.get("/api/v1/city/roads")
     def roads(bbox: str = Query(PILOT_QUERY)):
@@ -202,11 +207,12 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
 
     web = Path(__file__).resolve().parent / "web"
 
-    @api.get("/", include_in_schema=False)
-    def index():
-        return FileResponse(web / "index.html")
+    if web.is_dir():
+        @api.get("/", include_in_schema=False)
+        def index():
+            return FileResponse(web / "index.html")
 
-    api.mount("/static", StaticFiles(directory=web), name="static")
+        api.mount("/static", StaticFiles(directory=web), name="static")
     return api
 
 

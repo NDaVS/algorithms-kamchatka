@@ -108,6 +108,7 @@ class CitySnapshot(BaseModel):
     road_count_total: int
     infrastructure_count_total: int
     heights: dict[str, int]
+    building_evidence: dict = Field(default_factory=dict)
     graph_version: str | None
     crs_geometry: Literal["EPSG:4326"]
     crs_solver: Literal["EPSG:32657"]
@@ -143,7 +144,8 @@ class SolverBuilding(BaseModel):
     # Polygon, ring, coordinate; the first ring is the exterior.
     polygons_xy_m: list[list[list[tuple[float, float]]]]
     height_m: float | None
-    height_source: Literal["osm_height", "estimated_from_levels_3m_per_level", "unknown"]
+    height_source: Literal["osm_height", "estimated_from_levels_3m_per_level", "estimated_from_register_floors",
+                           "estimated_from_gba", "unknown"]
     height_flags: list[str]
     height_verified: bool
 

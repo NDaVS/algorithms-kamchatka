@@ -18,3 +18,5 @@ out/
 .ipynb_checkpoints/
 
 /city_sim/.state/
+
+/city_sim/data/building-location-checks.json.gz

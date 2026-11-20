@@ -16,7 +16,7 @@ const localDate = value => new Intl.DateTimeFormat('ru-RU', {
 const regionFrom = box => Object.fromEntries(['west', 'south', 'east', 'north'].map((name, i) => [name, box[i]]));
 const controls = ['speed', 'direction', 'height'].map(name => form.elements[name]);
 
-export function createScenarios(view, health) {
+export function createScenarios(view, health, revision) {
   let area = areas[0];
   let region = regionFrom(area.region);
   let current = null;
@@ -30,9 +30,12 @@ export function createScenarios(view, health) {
 
   function showStatus(value) { status = value; message.textContent = status; }
   function showSelection() {
-    $('run').disabled = !current || !health.solver_connected;
-    $('export').hidden = !current;
-    if (current) {
+    const pastVersion = current && current.data_revision !== revision;
+    $('run').disabled = !current || !health.solver_connected || pastVersion;
+    $('export').hidden = !current || pastVersion;
+    if (pastVersion) {
+      showStatus('Сценарий использует прежнюю геометрию. Для расчёта сохраните копию на текущей карте.');
+    } else if (current) {
       const location = `/api/v1/scenarios/${current.scenario_id}/solver-input`;
       $('export').href = location;
       $('export').download = `wind-input-${current.scenario_id}.json`;

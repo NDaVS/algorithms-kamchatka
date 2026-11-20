@@ -34,7 +34,9 @@ jobs:
       - run: python -m unittest discover -s city_sim/tests -v
       - run: docker compose -f compose.city-sim.yml up --build --detach --wait
       - run: |
-          curl -fsS http://127.0.0.1:8008/api/v1/city/metadata
+          test "$(docker compose -f compose.city-sim.yml ps --services --status running | sort | paste -sd ' ' -)" = "city-api city-web"
+          curl -fsS -o /dev/null http://127.0.0.1:8008/openapi.json
+          curl -fsS -o /dev/null http://127.0.0.1:8008/api/v1/city/metadata
           curl -fsS -o /dev/null http://127.0.0.1:8008/static/vendor/maplibre-gl.js
           curl -fsS -o /dev/null http://127.0.0.1:8008/static/vendor/three.module.min.js
       - if: always()

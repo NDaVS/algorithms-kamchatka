@@ -15,6 +15,7 @@ from shapely.geometry.polygon import orient
 
 from snowops.osm import load_osm
 from weather_coverage.geography import read_osm, relation_polygon, tags
+from .building_evidence import BuildingEvidence, public_address
 from .terrain import BOUNDS, DATA
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -83,23 +84,26 @@ class Layer:
 
 
 class CityData:
-    def __init__(self, buildings_path, graph_path, supplements=(), terrain=None):
+    def __init__(self, buildings_path, graph_path, supplements=(), terrain=None, building_evidence=True):
         self.buildings_path = Path(buildings_path)
         self.graph_path = Path(graph_path)
         self.supplements = tuple(supplements)
         self.terrain = terrain
+        self.use_building_evidence = building_evidence
         self.grade_path = DATA / "road-grades.json.gz"
         self._revision_cache = None
 
     @property
     def data_revision(self):
         paths = [self.buildings_path, self.graph_path, *self.supplements, self.grade_path]
+        if self.use_building_evidence:
+            paths.extend(BuildingEvidence.paths)
         if self.terrain:
             paths.extend((self.terrain.path, self.terrain.path.with_suffix(".json")))
         signature = tuple((p.stat().st_size, p.stat().st_mtime_ns) if p.is_file() else None for p in paths)
         if self._revision_cache is None or self._revision_cache[0] != signature:
             if self._revision_cache:
-                for key in ("osm_layers", "graph_layers"):
+                for key in ("osm_layers", "graph_layers", "building_evidence_metadata", "building_candidate_layer"):
                     self.__dict__.pop(key, None)
                 if self.terrain:
                     self.terrain.tiles.cache_clear()
@@ -144,11 +148,14 @@ class CityData:
             geom = unary_union(parts)
             identifier = f"osm:{'way' if key[0] == 'w' else 'relation'}:{key[1:]}"
             heights = building_height(meta)
+            key, address = public_address(meta)
+            start = re.match(r"^(1[89]\d{2}|20[0-2]\d)(?:$|-)", meta.get("start_date", ""))
             buildings.append(feature(geom, identifier, asset_id=identifier, **heights,
+                                     address_key=key, address=address,
+                                     construction_year=int(start[1]) if start else None,
+                                     construction_year_source="osm_start_date" if start else None,
                                      name=meta.get("name"), building_type=meta["building"],
                                      data_kind="osm_geometry"))
-            stats[heights["height_source"]] += 1
-            stats.update(heights["height_flags"])
             return True
 
         water = []
@@ -198,7 +205,32 @@ class CityData:
                 base.append(feature(line.simplify(.000012), key, kind="street", name=meta.get("name")))
         base.extend(feature(part, f"water-{i}", kind="water")
                     for i, part in enumerate(polygons(unary_union(water))))
+        self.building_evidence_metadata = {}
+        if self.use_building_evidence:
+            evidence = BuildingEvidence()
+            buildings.extend(evidence.supplement["features"])
+            node_addresses = []
+            for key, coords in nodes.items():
+                address, _ = public_address(tags(elements[key]))
+                if address:
+                    node_addresses.append((address, Point(coords)))
+            self.building_evidence_metadata = evidence.enrich(buildings, node_addresses)
+        for item in buildings:
+            attributes = item["properties"]
+            stats[attributes["height_source"]] += 1
+            stats.update(attributes["height_flags"])
+            attributes.pop("address_key", None)
         return Layer(buildings), collection(base, source="OpenStreetMap"), dict(stats)
+
+    @cached_property
+    def building_candidate_layer(self):
+        candidates = BuildingEvidence().checks.get("candidates", []) if self.use_building_evidence else []
+        return Layer(candidates)
+
+    def building_candidates(self, bbox):
+        self.data_revision
+        return collection(self.building_candidate_layer.query(bbox), source="GlobalBuildingAtlas",
+                          status="unverified_candidate_outlines")
 
     @cached_property
     def graph_layers(self):
@@ -228,7 +260,7 @@ class CityData:
 
     def buildings(self, bbox):
         revision = self.data_revision
-        return collection(self.osm_layers[0].query(bbox), source="OpenStreetMap", revision=revision)
+        return collection(self.osm_layers[0].query(bbox), source="OpenStreetMap", revision=revision, building_evidence=self.building_evidence_metadata)
 
     def roads(self, bbox):
         self.data_revision
@@ -249,5 +281,5 @@ class CityData:
                     building_count_total=len(buildings.features), road_count_total=len(roads.features),
                     infrastructure_count_total=len(infrastructure.features), heights=height_audit,
                     graph_version=graph.version if graph else None, crs_geometry="EPSG:4326",
-                    crs_solver="EPSG:32657", terrain=self.terrain.metadata if self.terrain else None,
+                    crs_solver="EPSG:32657", building_evidence=self.building_evidence_metadata, terrain=self.terrain.metadata if self.terrain else None,
                     physical_dem_loaded=bool(self.terrain and self.terrain.metadata))

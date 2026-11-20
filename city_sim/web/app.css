@@ -122,3 +122,11 @@ a.button { text-decoration: none; text-align: center; }
   .maplibregl-ctrl-bottom-left .maplibregl-ctrl-scale { margin-bottom: 40px; }
   .scene-caption { bottom: 67px; }
 }
+
+#map .maplibregl-canvas { touch-action: none; }
+
+.key.register { background: #b9d8a6; }
+.key.model { background: #9ebdcb; }
+.popup-details a { color: #c3efa8; }
+
+.swatch.candidates { border: 1px dashed #8de4ff; }
