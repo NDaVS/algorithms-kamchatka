@@ -75,9 +75,10 @@
               <button id="ops-next" type="button" aria-label="Следующий срок">›</button>
             </div>
           </div>
-          <label id="ops-event-label" hidden>Исторический эпизод
+          <label id="ops-event-label" hidden>Историческая серия
             <select id="ops-event"></select>
           </label>
+          <p id="ops-storm-hours" class="secondary" hidden></p>
           <details id="ops-archive-input">
             <summary>Параметры снега</summary>
             <label>Снег / вода по объёму
@@ -95,14 +96,17 @@
             </div>
             <label>Свежий снег, см/ч<input id="ops-snow" type="number" min="0" max="30" step=".1" value="2"></label>
           </div>
-          <button type="submit" class="primary" id="ops-calculate" disabled>Рассчитать снег для города</button>
         </form>
-        <p id="ops-result-status" class="secondary" role="status"></p>
         <section class="ops-layers" aria-label="Погодные слои">
-          <h2>Слои на карте</h2>
-          <label id="atlas-field-row">Погодный атлас
+          <h2>Погода на карте</h2>
+          <label id="atlas-field-row">Показать на карте
             <select id="atlas-field" aria-label="Погодный атлас"><option value="none">Выключен</option></select>
           </label>
+          <div class="ops-presets weather-presets" id="weather-presets" role="group" aria-label="Быстрые слои погоды">
+            <button type="button" data-weather="snow">Снегопад</button>
+            <button type="button" data-weather="precip">Осадки</button>
+            <button type="button" data-weather="wind_speed">Ветер</button>
+          </div>
           <div class="ops-toggles">
             <label><input id="ops-wind-arrows" type="checkbox" checked> Стрелки ветра</label>
             <label id="atlas-points-row"><input id="atlas-points" type="checkbox"> Точки данных</label>
@@ -116,6 +120,10 @@
           </details>
           <p id="atlas-status" class="secondary" role="status"></p>
         </section>
+        <div class="snow-action">
+          <button type="submit" form="ops-form" class="primary" id="ops-calculate" disabled>Рассчитать снег для города</button>
+          <p id="ops-result-status" class="secondary" role="status"></p>
+        </div>
         <section id="ops-snow-result" hidden>
           <p id="ops-calc-summary" class="secondary" role="status"></p>
           <h2>Снег и дороги</h2>
@@ -138,6 +146,12 @@
             <option value="weather_wind">Ветер по погодным данным · м/с</option>
             <option value="weather_distance" hidden>Расстояние до погодной точки · км</option>
           </select>
+          <div class="snow-render">
+            <label><input type="checkbox" id="snow-volume"> Объёмный снег</label>
+            <label id="snow-height-row" hidden>Высота на карте
+              <select id="snow-height"><option value="1">×1 · фактический масштаб</option><option value="12" selected>×12 · усилить рельеф снега</option></select>
+            </label>
+          </div>
           <label class="ops-opacity">Непрозрачность снега<input id="ops-snow-opacity" type="range" min="0" max="100" value="78"></label>
           <details><summary>Дороги для проверки</summary>
             <p id="ops-roads-label" class="secondary"></p>
@@ -202,7 +216,7 @@
       <div class="scene-snow-legend" id="scene-snow-legend" hidden>
         <div id="ops-scale-model" hidden>
           <b id="ops-scale-label">Индекс накопления</b>
-          <div class="ops-scale"><i></i><span id="ops-scale-start">0</span><span id="ops-scale-mid">0,5</span><span id="ops-scale-end">1</span></div>
+          <div class="ops-scale" id="ops-model-ramp"><i></i><span id="ops-scale-start">0</span><span id="ops-scale-mid">0,5</span><span id="ops-scale-end">1</span></div>
         </div>
         <div id="atlas-scale" hidden>
           <b id="atlas-scale-label"></b>
@@ -224,8 +238,23 @@
           <div class="layer-row"><span class="swatch buildings"></span><span>3D-здания <small>Контуры OpenStreetMap</small></span><input type="checkbox" id="buildings" checked aria-label="3D-здания"></div>
           <div class="layer-row"><span class="swatch roads"></span><span>Дорожный граф <small>Голубые линии · расширение OSM</small></span><input type="checkbox" id="roads" checked aria-label="Дорожный граф"></div>
         </div></details>
-        <button id="view" type="button" aria-pressed="true" title="Переключить наклон карты. На сенсорном экране ведите двумя пальцами вверх или вниз.">3D</button>
+        <button id="view" type="button" aria-pressed="true" title="Переключить наклон. На трекпаде ведите двумя пальцами вверх или вниз. Мышь — Alt и колесо.">3D</button>
       </div>
+      <details class="map-layer-menu" id="weather-menu">
+        <summary><span aria-hidden="true">▱</span> Слои <span class="menu-arrow" aria-hidden="true">⌄</span></summary>
+        <div class="map-layer-card">
+          <b>Погода</b>
+          <div class="map-layer-tiles" id="weather-menu-tiles"></div>
+          <label class="map-layer-switch"><input type="checkbox" id="weather-menu-wind" checked> Стрелки ветра</label>
+          <section id="weather-menu-model" hidden>
+            <b>Снег на земле</b>
+            <div class="map-layer-tiles">
+              <button type="button" class="layer-tile" data-snow-view="heat"><i class="layer-preview heat-preview"></i><span>Заливка</span></button>
+              <button type="button" class="layer-tile" data-snow-view="volume"><i class="layer-preview volume-preview"></i><span>Объём</span></button>
+            </div>
+          </section>
+        </div>
+      </details>
       <div class="scene-caption" aria-live="polite">
         <b id="scene-location">Центр · Култучное озеро</b>
         <span id="coords">53.034° с. ш. · 158.645° в. д.</span>

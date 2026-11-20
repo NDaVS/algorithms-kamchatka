@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from shapely.geometry import Point
 
 from city_sim.api import make_app
-from city_sim.city_snow import CitySnow, CitySnowRequest, administrative_boundary, remap
+from city_sim.city_snow import CitySnow, CitySnowRequest, administrative_boundary, checkpoints, remap
 from city_sim.snow_experiment import SnowStudy
 from city_sim.weather import WeatherArchive
 
@@ -57,6 +57,22 @@ class CitywideWeatherTests(unittest.TestCase):
         self.assertEqual(sampled[0, 3], 2)
         self.assertEqual(sampled[3, 3], 3)
         self.assertTrue(np.isnan(sampled[3, 0]))
+
+    def test_storm_weather_is_available_before_calculation(self):
+        with TemporaryDirectory() as folder:
+            client = TestClient(make_app(db_path=Path(folder) / "fixture.sqlite"))
+            storms = client.get("/api/v1/operations/atlas").json()["storms"]
+            self.assertEqual({name: len(event["terms"]) for name, event in storms.items()}, {
+                "march-2025": 96, "december-2025": 216, "january-2026": 144
+            })
+            terms = storms["january-2026"]["terms"]
+            frame = client.get("/api/v1/operations/atlas/frame", params={
+                "dataset": "storm", "event_id": "january-2026", "valid_at": terms[80], "field": "snow"
+            }).json()
+            self.assertEqual(frame["valid_at"], terms[80])
+            self.assertEqual(len(frame["points"]), 3)
+            self.assertGreater(frame["grid_cells"], 0)
+        self.assertEqual((checkpoints(216)[0], checkpoints(216)[-1], len(checkpoints(216))), (0, 215, 19))
 
     def test_drawn_outline_rejects_crossing_and_clips_on_land(self):
         corners = [(158.630, 53.028), (158.646, 53.028), (158.646, 53.040), (158.630, 53.040)]

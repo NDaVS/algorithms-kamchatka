@@ -37,6 +37,7 @@ export function createWeatherLayers(map) {
   let dataset;
   let stamp;
   let catalog;
+  let eventId;
   let atlas;
   let result;
   let modelFrame;
@@ -44,12 +45,49 @@ export function createWeatherLayers(map) {
   const field = $('atlas-field');
   const status = $('atlas-status');
   const display = () => field.value !== 'none';
+  const presets = Array.from(document.querySelectorAll('[data-weather]'));
+  const sourceData = () => dataset === 'storm' ? catalog?.storms?.[eventId] : catalog?.[dataset];
+  const menu = $('weather-menu');
+  const tiles = $('weather-menu-tiles');
+  const arrowsToggle = $('ops-wind-arrows');
+  const menuArrows = $('weather-menu-wind');
+
+  function choose(next) {
+    field.value = field.value === next ? 'none' : next;
+    refresh();
+  }
+
+  function buildTiles(fields) {
+    const displayFields = { none: { name: 'Без заливки', colors: ['#233b33', '#344c43'] }, ...fields };
+    tiles.replaceChildren(...Object.entries(displayFields).map(([key, value]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'layer-tile';
+      button.dataset.layer = key;
+      const thumbnail = document.createElement('i');
+      thumbnail.className = 'layer-preview';
+      thumbnail.style.background = `linear-gradient(140deg,${value.colors.join(',')})`;
+      thumbnail.setAttribute('aria-hidden', 'true');
+      const name = document.createElement('span');
+      name.textContent = value.name;
+      button.append(thumbnail, name);
+      button.addEventListener('click', () => choose(key));
+      return button;
+    }));
+  }
 
   function legend() {
     $('scene-snow-legend').hidden = ['ops-scale-model', 'atlas-scale', 'ops-wind-legend'].every(id => $(id).hidden);
   }
 
   function paint() {
+    for (const button of presets) {
+      button.setAttribute('aria-pressed', String(button.dataset.weather === field.value));
+    }
+    for (const button of tiles.children) {
+      button.setAttribute('aria-pressed', String(button.dataset.layer === field.value));
+    }
+    menuArrows.checked = arrowsToggle.checked;
     const showAtlas = atlas && display() && atlas.grid_cells > 0;
     map.setLayoutProperty('operations-atlas', 'visibility', showAtlas ? 'visible' : 'none');
     if (showAtlas) {
@@ -78,7 +116,7 @@ export function createWeatherLayers(map) {
 
   async function refresh() {
     const epoch = ++token;
-    if (!dataset || !stamp || !catalog?.[dataset]) {
+    if (!dataset || !stamp || !sourceData()) {
       atlas = undefined;
       status.textContent = '';
       paint();
@@ -88,6 +126,7 @@ export function createWeatherLayers(map) {
     const params = new URLSearchParams({
       dataset, valid_at: stamp, field: name, method: $('atlas-method').value
     });
+    if (eventId) params.set('event_id', eventId);
     try {
       const frame = await request(`/operations/atlas/frame?${params}`);
       if (epoch !== token) return;
@@ -104,6 +143,17 @@ export function createWeatherLayers(map) {
   }
 
   field.addEventListener('change', refresh);
+  for (const button of presets) button.addEventListener('click', () => choose(button.dataset.weather));
+  menuArrows.addEventListener('change', () => { arrowsToggle.checked = menuArrows.checked; paint(); });
+  menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      menu.open = false;
+      menu.querySelector('summary').focus();
+    }
+  });
+  document.addEventListener('pointerdown', event => {
+    if (!menu.contains(event.target)) menu.open = false;
+  });
   $('atlas-method').addEventListener('change', refresh);
   for (const id of ['ops-wind-arrows', 'atlas-points']) $(id).addEventListener('change', paint);
   $('atlas-opacity').addEventListener('input', event => {
@@ -113,19 +163,21 @@ export function createWeatherLayers(map) {
 
   return {
     setCatalog(value) { catalog = value; },
-    setWeather(source, timestamp) {
-      const sourceChanged = source !== dataset;
+    setWeather(source, timestamp, storm) {
+      const sourceChanged = source !== dataset || storm !== eventId;
       if (sourceChanged || timestamp !== stamp) atlas = undefined;
+      [dataset, stamp, eventId] = [source, timestamp, storm];
       if (sourceChanged) {
         const previous = field.value;
-        const options = catalog?.[source]?.fields || {};
+        const options = sourceData()?.fields || {};
         field.replaceChildren(new Option('Выключен', 'none'), ...Object.entries(options)
           .map(([key, item]) => new Option(item.name, key)));
         field.value = previous in options ? previous : options.snow ? 'snow' : 'none';
+        buildTiles(options);
+        for (const button of presets) button.disabled = !(button.dataset.weather in options);
       }
-      [dataset, stamp] = [source, timestamp];
       paint();
-      for (const id of ['atlas-field-row', 'atlas-points-row', 'atlas-display-settings']) $(id).hidden = !source;
+      for (const id of ['atlas-field-row', 'atlas-points-row', 'atlas-display-settings', 'weather-presets']) $(id).hidden = !source;
       refresh();
     },
     setResult(value) {

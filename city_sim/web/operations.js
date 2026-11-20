@@ -1,12 +1,13 @@
 import { $, empty, format, request } from './api.js';
 import { createWeatherLayers, localTerm as time, raster } from './weather_layers.js';
+import { createSnowVolume } from './snow_volume.js';
 
 const titles = {
   inspect: 'Район требует проверки', missing: 'Прогноз недоступен',
   forecast_below_threshold: 'Сигналов выше порога нет'
 };
 const reasons = { snow: 'снегопад', wind: 'сильный ветер или порывы', source_conflict: 'сведения расходятся' };
-const datasets = { archive: 'forecast', 'atlas-history': 'history', live: 'live' };
+const datasets = { archive: 'forecast', 'atlas-history': 'history', live: 'live', historic: 'storm' };
 const modelNames = {
   snow_cm: 'Свежий снег по модели', drift_cm: 'Наносы сверх снегопада',
   opposite_snow_cm: 'Снег при развороте ветра', combined: 'Приоритет проверки дорог',
@@ -42,6 +43,7 @@ function download(file, data) {
 export function createOperations(view, health) {
   const map = view.map;
   const weather = createWeatherLayers(map);
+  const volume = createSnowVolume(map);
   const scope = $('ops-scope');
   const source = $('ops-input');
   const term = $('ops-city-term');
@@ -63,15 +65,41 @@ export function createOperations(view, health) {
   let drawing = false;
   let vertices = [];
   let zone;
+  let zoneMarker;
   const active = () => !$('operations-panel').hidden;
   const currentRows = () => archive?.rows.filter(r => r.valid_at === $('ops-term').value) ?? [];
   const atlasDataset = () => datasets[source.value];
+  const stormId = () => $('ops-event').value;
+  const weatherCatalog = dataset => dataset === 'storm' ? catalog?.storms?.[stormId()] : catalog?.[dataset];
+  const zoneActions = document.createElement('div');
+  zoneActions.className = 'zone-actions';
+  zoneActions.setAttribute('role', 'group');
+  zoneActions.setAttribute('aria-label', 'Действия над контуром');
+  const redraw = document.createElement('button');
+  const calculate = document.createElement('button');
+  redraw.type = calculate.type = 'button';
+  redraw.textContent = 'Начертить заново';
+  calculate.className = 'primary';
+  calculate.textContent = 'Рассчитать';
+  zoneActions.append(redraw, calculate);
+  zoneActions.addEventListener('click', event => event.stopPropagation());
+  redraw.addEventListener('click', beginDraw);
+  calculate.addEventListener('click', () => $('ops-form').requestSubmit());
+
+  function positionZoneActions() {
+    if (!zoneMarker || !zone?.length) return;
+    const top = zone.reduce((first, vertex) => map.project(vertex).y < map.project(first).y ? vertex : first);
+    zoneMarker.setLngLat(top);
+  }
+  map.on('move', positionZoneActions);
 
   function updateButton() {
-    const needsTerm = Boolean(atlasDataset()) && !term.value;
+    const needsTerm = Boolean(atlasDataset()) && source.value !== 'historic' && !term.value;
     const needsZone = scope.value === 'zone' && (!zone || drawing);
     const needsEvent = source.value === 'historic' && !$('ops-event').value;
     $('ops-calculate').disabled = !health.snow_solver_connected || needsTerm || needsZone || needsEvent || busy;
+    calculate.disabled = $('ops-calculate').disabled;
+    calculate.textContent = busy ? 'Считаю…' : 'Рассчитать';
   }
 
   function pause() {
@@ -120,6 +148,11 @@ export function createOperations(view, health) {
     }
     const image = calculated?.overlays[choice];
     const visible = Boolean(image);
+    const volumeVisible = visible && choice === 'snow_cm' && $('snow-volume').checked;
+    $('weather-menu-model').hidden = !calculated;
+    for (const button of document.querySelectorAll('[data-snow-view]')) {
+      button.setAttribute('aria-pressed', String(choice === 'snow_cm' && (button.dataset.snowView === 'volume') === volumeVisible));
+    }
     const rankKey = ['snow_cm', 'drift_cm'].includes(choice) ? 'combined' : choice === 'opposite_snow_cm' ? 'opposite' : choice;
     const temporal = calculated?.timeline?.length > 0 && modelFrame < calculated.timeline.length;
     const rank = visible && !temporal ? calculated.ranking[rankKey] || [] : [];
@@ -132,12 +165,16 @@ export function createOperations(view, health) {
       ? network?.features.filter(f => flagged.has(f.properties.district_id)) : [];
     map.getSource('operations-roads').setData({ ...empty(), features: highlighted || [] });
     map.getSource('operations-points').setData({ ...empty(), features: choice.startsWith('weather_') ? markers : ranked });
-    map.setLayoutProperty('operations-snow', 'visibility', visible ? 'visible' : 'none');
+    map.setLayoutProperty('operations-snow', 'visibility', visible && !volumeVisible ? 'visible' : 'none');
+    volume.show(volumeVisible ? calculated.run_id : null, temporal ? modelFrame : undefined);
+    $('snow-height-row').hidden = !volumeVisible;
+    $('ops-model-ramp').hidden = volumeVisible;
     $('ops-scale-model').hidden = !visible;
     if (visible) {
       const frame = choice === 'snow_cm' && calculated.timeline?.[modelFrame];
-      raster(map, 'operations-snow', calculated.bounds, frame || image);
-      $('ops-scale-label').textContent = frame ? 'Свежий снег к выбранному часу' : modelNames[choice];
+      if (!volumeVisible) raster(map, 'operations-snow', calculated.bounds, frame || image);
+      $('ops-scale-label').textContent = volumeVisible ? `Снег в 3D · высота ×${$('snow-height').value}` :
+        frame ? 'Свежий снег к выбранному часу' : modelNames[choice];
       const unit = units[choice];
       const maximum = calculated.scales[choice] ?? 1;
       $('ops-scale-start').textContent = unit ? `0 ${unit}` : '0';
@@ -183,7 +220,8 @@ export function createOperations(view, health) {
 
   function selectWeather() {
     const dataset = atlasDataset();
-    if (catalog && (!dataset || catalog[dataset])) weather.setWeather(dataset, term.value);
+    if (weatherCatalog(dataset)) weather.setWeather(dataset, term.value, dataset === 'storm' ? stormId() : undefined);
+    else weather.setWeather(undefined, undefined);
     updateButton();
     updateTimeline();
   }
@@ -191,9 +229,12 @@ export function createOperations(view, health) {
   function setTerms() {
     const dataset = atlasDataset();
     const previously = term.value;
-    const times = catalog?.[dataset]?.terms || [];
+    const times = weatherCatalog(dataset)?.terms || [];
     term.replaceChildren(...times.map(value => new Option(time(value), value)));
     if (times.includes(previously)) term.value = previously;
+    else if (dataset === 'storm' && times.length) term.value = weatherCatalog(dataset).peak_at;
+    $('ops-storm-hours').textContent = dataset === 'storm' && times.length
+      ? `${times.length} ${({ one: 'час', few: 'часа' })[plural.select(times.length)] || 'часов'}. Модель суммирует свежий снег за всю серию при условии, что он сохраняется на месте.` : '';
     if (dataset === 'live' && !times.includes(previously) && times.length > 1) {
       const now = Date.parse(catalog.live.retrieved_at);
       term.selectedIndex = Math.max(0, times.findIndex(t => Date.parse(t) >= now));
@@ -232,12 +273,13 @@ export function createOperations(view, health) {
     $('ops-archive-input').hidden = source.value !== 'archive';
     $('ops-city-term-label').hidden = !atlasDataset();
     $('ops-event-label').hidden = source.value !== 'historic';
+    $('ops-storm-hours').hidden = source.value !== 'historic';
     $('ops-calculate').textContent = ({ city: 'Рассчитать снег для города',
       district: 'Рассчитать снег для района', zone: 'Рассчитать снег в контуре' })[scope.value];
+    if (source.value === 'historic') $('ops-calculate').textContent = 'Рассчитать снег за всю серию';
     $('ops-live-controls').hidden = source.value !== 'live';
     $('ops-district-audit').hidden = scope.value !== 'district' || source.value !== 'archive';
     setTerms();
-    if (!atlasDataset() || !catalog?.[atlasDataset()]) weather.setWeather(undefined, undefined);
     if (source.value === 'live' && catalog) updateLive();
   }
 
@@ -260,8 +302,10 @@ export function createOperations(view, health) {
       modelFrame = index;
       layer.value = 'snow_cm';
       weather.setFrame(index);
-      if (calculated.input.source === 'live') {
-        weather.setWeather('live', calculated.wind_frames[index].valid_at);
+      if (atlasDataset()) {
+        if (source.value === 'historic') term.value = calculated.wind_frames[index].valid_at;
+        weather.setWeather(atlasDataset(), calculated.wind_frames[index].valid_at,
+          source.value === 'historic' ? stormId() : undefined);
       }
       updateTimeline();
       paint();
@@ -287,18 +331,29 @@ export function createOperations(view, health) {
       else setFrame(next);
     }, calculated?.timeline?.length ? 1200 : 900);
   });
-  term.addEventListener('change', () => { pause(); resetSnow(); selectWeather(); });
+  function changeTerm() {
+    pause();
+    if (source.value === 'historic' && calculated?.timeline?.length) {
+      const stamp = Date.parse(term.value);
+      const chosen = calculated.wind_frames.reduce((closest, frame, i, frames) =>
+        Math.abs(Date.parse(frame.valid_at)-stamp) < Math.abs(Date.parse(frames[closest].valid_at)-stamp) ? i : closest, 0);
+      setFrame(chosen);
+      return;
+    }
+    if (source.value !== 'historic' || !busy) resetSnow();
+    selectWeather();
+  }
+  term.addEventListener('change', changeTerm);
   for (const [id, step] of [['ops-prev', -1], ['ops-next', 1]]) $(id).addEventListener('click', () => {
     pause();
     const index = term.selectedIndex+step;
     if (index >= 0 && index < term.options.length) {
       term.selectedIndex = index;
-      resetSnow();
-      selectWeather();
+      changeTerm();
     }
   });
   source.addEventListener('change', updateInput);
-  $('ops-event').addEventListener('change', () => { pause(); resetSnow(); });
+  $('ops-event').addEventListener('change', () => { pause(); resetSnow(); setTerms(); });
   $('ops-live-refresh').addEventListener('click', updateLive);
   setInterval(() => { if (source.value === 'live' && !busy && !player) updateLive(); }, 20*60*1000);
   for (const button of document.querySelectorAll('[data-model]')) button.addEventListener('click', () => {
@@ -310,11 +365,22 @@ export function createOperations(view, health) {
       pause();
       modelFrame = calculated.wind_frames.length-1;
       weather.setFrame(modelFrame);
-      if (calculated.input.source === 'live') weather.setWeather('live', calculated.wind_frames[modelFrame].valid_at);
+      if (atlasDataset()) weather.setWeather(atlasDataset(), calculated.wind_frames[modelFrame].valid_at,
+        source.value === 'historic' ? stormId() : undefined);
       updateTimeline();
     }
     paint();
   });
+  $('snow-volume').addEventListener('change', () => {
+    if ($('snow-volume').checked) layer.value = 'snow_cm';
+    paint();
+  });
+  for (const button of document.querySelectorAll('[data-snow-view]')) button.addEventListener('click', () => {
+    layer.value = 'snow_cm';
+    $('snow-volume').checked = button.dataset.snowView === 'volume';
+    paint();
+  });
+  $('snow-height').addEventListener('change', paint);
   function showDraw() {
     const ring = vertices.length >= 3 ? [...vertices, vertices[0]] : null;
     const features = vertices.map(coordinates => point(coordinates, {}));
@@ -322,12 +388,22 @@ export function createOperations(view, health) {
     else if (vertices.length === 2) features.unshift({ type: 'Feature', geometry: { type: 'LineString', coordinates: vertices }, properties: {} });
     map.getSource('operations-zone').setData({ ...empty(), features });
     canvas.dataset.drawing = String(drawing);
+    if (drawing) map.doubleClickZoom.disable();
+    else map.doubleClickZoom.enable();
     $('ops-draw-start').textContent = zone || drawing ? 'Начертить заново' : 'Начертить';
     $('ops-draw-undo').hidden = $('ops-draw-end').hidden = !drawing;
     $('ops-draw-undo').disabled = !vertices.length;
     $('ops-draw-end').disabled = vertices.length < 3;
-    $('ops-draw-status').textContent = drawing ? `Ставьте точки на карте · ${vertices.length}/24` :
+    $('ops-draw-status').textContent = drawing ? `Ставьте точки на карте · ${vertices.length}/64 · Enter для завершения` :
       zone ? `Контур готов · ${zone.length} точек` : 'Задайте границу щелчками по карте.';
+    if (zone && !drawing) {
+      zoneMarker ??= new maplibregl.Marker({ element: zoneActions, anchor: 'bottom', offset: [0, -12] })
+        .setLngLat(zone[0]).addTo(map);
+      positionZoneActions();
+    } else {
+      zoneMarker?.remove();
+      zoneMarker = undefined;
+    }
     updateButton();
   }
   function finishDraw() {
@@ -337,28 +413,43 @@ export function createOperations(view, health) {
       showDraw();
     }
   }
-  $('ops-draw-start').addEventListener('click', () => {
+  function beginDraw() {
     zone = undefined;
     vertices = [];
     drawing = true;
     resetSnow();
     showDraw();
-  });
+    canvas.focus({ preventScroll: true });
+  }
+  $('ops-draw-start').addEventListener('click', beginDraw);
   $('ops-draw-end').addEventListener('click', finishDraw);
   $('ops-draw-undo').addEventListener('click', () => { vertices.pop(); showDraw(); });
   map.on('click', event => {
-    if (!drawing || vertices.length >= 24) return;
+    if (!drawing || vertices.length >= 64) return;
+    const previous = vertices.at(-1);
+    if (previous && Math.hypot(event.lngLat.lng-previous[0], event.lngLat.lat-previous[1]) < .000003) return;
     vertices.push([Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))]);
     showDraw();
   });
   scope.addEventListener('change', () => {
-    if (scope.value !== 'zone') {
+    if (scope.value === 'zone') {
+      beginDraw();
+    } else {
       drawing = false;
       vertices = [];
       zone = undefined;
     }
     showDraw();
     updateInput();
+  });
+  canvas.addEventListener('keydown', event => {
+    if (!drawing) return;
+    if (event.key === 'Enter') finishDraw();
+    if (event.key === 'Backspace') {
+      event.preventDefault();
+      vertices.pop();
+      showDraw();
+    }
   });
 
   $('ops-snow-opacity').addEventListener('input', event =>
@@ -379,7 +470,7 @@ export function createOperations(view, health) {
     };
     if (scope.value === 'district') payload.district_id = district;
     if (scope.value === 'zone') payload.zone = zone;
-    if (atlasDataset()) payload.valid_at = term.value;
+    if (atlasDataset() && source.value !== 'historic') payload.valid_at = term.value;
     if (source.value === 'archive') payload.snow_to_liquid_ratio = $('ops-ratio').valueAsNumber;
     if (source.value === 'historic') payload.event_id = $('ops-event').value;
     if (source.value === 'live') {
@@ -396,13 +487,19 @@ export function createOperations(view, health) {
       modelFrame = result.wind_frames.length-1;
       weather.setResult(result);
       weather.setFrame(modelFrame);
-      if (result.input.source === 'live') weather.setWeather('live', result.wind_frames[modelFrame].valid_at);
+      if (result.input.source === 'live' || result.input.source === 'reanalysis') {
+        if (source.value === 'historic') term.value = result.wind_frames[modelFrame].valid_at;
+        weather.setWeather(atlasDataset(), result.wind_frames[modelFrame].valid_at,
+          source.value === 'historic' ? stormId() : undefined);
+      }
       layer.querySelector('[value="weather_distance"]').hidden = result.source.kind === 'manual';
       layer.value = 'snow_cm';
       $('ops-snow-result').hidden = false;
       const count = m.computed_tiles ?? 0;
       const label = ({ one: 'участок', few: 'участка' })[plural.select(count)] || 'участков';
-      $('ops-calc-summary').textContent = `${result.district} · ${count} ${label} · ${format(m.road_m_covered/1000)} км дорог`;
+      const dates = result.source.kind === 'reanalysis'
+        ? ` · ${time(result.source.start_at)} — ${time(result.source.end_at)}` : '';
+      $('ops-calc-summary').textContent = `${result.district} · ${count} ${label} · ${format(m.road_m_covered/1000)} км дорог${dates}`;
       resultStatus.textContent = '';
       lines($('ops-snow-checks'), [
         `Модель Данила · ${result.provenance.engine_commit.slice(0, 8)}`,
@@ -456,6 +553,7 @@ export function createOperations(view, health) {
   request('/operations/city/catalog').then(data => {
     $('ops-event').replaceChildren(...data.storms.map(event => new Option(event.title, event.event_id)));
     updateButton();
+    if (source.value === 'historic') setTerms();
   }).catch(error => { resultStatus.textContent = error.message; });
   request('/operations/network').then(data => { network = data; showDistrictWeather(); }).catch(() => {});
   loadDistrictArchive();

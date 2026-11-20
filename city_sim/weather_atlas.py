@@ -21,7 +21,10 @@ HISTORY_COLUMNS = dict(zip(FIELDS, ("temp_c", "feels_like_c", "wind_ms", "gust_m
                                     "snowfall_cm_1h", "rain_mm_1h", "visibility_m", "humidity_pct",
                                     "cloud_pct", "pop_pct", "precip_mm_1h")))
 HISTORY_UNITS = {"snow": ("Снег за час", "см/ч"), "rain": ("Дождь за час", "мм/ч")}
-DATASETS = {"forecast": "OpenWeather Forecast", "history": "Open-Meteo Historical Forecast", "live": PROVIDER}
+DATASETS = {"forecast": "OpenWeather Forecast", "history": "Open-Meteo Historical Forecast", "live": PROVIDER,
+            "storm": "Open-Meteo · реанализ ECMWF IFS"}
+STORM_FIELDS = {"temp": "temperature_c", "wind_speed": "wind_speed_ms", "wind_gust": "gust_ms",
+                "wind_deg": "wind_from_deg", "snow": "snowfall_cm", "precip": "precipitation_mm"}
 GRID_W, GRID_H = 288, 376
 
 
@@ -34,16 +37,17 @@ def number(column):
 
 def describe(key, dataset):
     name, unit, span, colors = FIELDS[key]
-    if dataset in {"history", "live"}:
+    if dataset in {"history", "live", "storm"}:
         name, unit = HISTORY_UNITS.get(key, (name, unit))
     return {"name": name, "unit": unit, "range": span, "colors": colors}
 
 
 class WeatherAtlas:
-    def __init__(self, root, land):
+    def __init__(self, root, land, storms=lambda: {}):
         self.root = root
         self.land = land
         self.live = LiveWeather()
+        self.storms = storms
 
     @cached_property
     def datasets(self):
@@ -73,9 +77,30 @@ class WeatherAtlas:
         return result
 
     def catalog(self):
-        return {key: {"title": DATASETS[key], "terms": [t.astimezone(ZONE).isoformat() for t in sorted(frames)],
+        archived = {key: {"title": DATASETS[key], "terms": [t.astimezone(ZONE).isoformat() for t in sorted(frames)],
                       "fields": {field: describe(field, key) for field in FIELDS}}
                 for key, (_, frames) in self.datasets.items()}
+        archived["storms"] = {}
+        for key, event in self.storms().items():
+            _, frames = self.storm_frames(key)
+            peak = max(frames, key=lambda stamp: sum(point["snow"] or 0 for point in frames[stamp]))
+            archived["storms"][key] = {"title": event["title"], "terms": [stamp.isoformat() for stamp in frames],
+                                        "peak_at": peak.isoformat(),
+                                        "fields": {field: describe(field, "storm") for field in STORM_FIELDS}}
+        return archived
+
+    @lru_cache(maxsize=4)
+    def storm_frames(self, event_id):
+        event = self.storms().get(event_id)
+        if not event:
+            raise ValueError("Выберите историческую серию.")
+        frames = {}
+        for i, site in enumerate(event["locations"]):
+            for hour in site["hours"]:
+                stamp = datetime.fromisoformat(hour["valid_at"])
+                frames.setdefault(stamp, []).append({"id": str(i), "coordinates": tuple(site["coordinates"]),
+                                                    **{k: hour[v] for k, v in STORM_FIELDS.items()}})
+        return event["raw_sha256"], frames
 
     def live_catalog(self):
         snapshot = self.live.get()
@@ -137,17 +162,23 @@ class WeatherAtlas:
                 "dist": meters, "indices": np.where(meters <= limit, ids, -1)}
 
     @lru_cache(maxsize=32)
-    def _frame(self, dataset, stamp, field, method, revision=None):
+    def _frame(self, dataset, stamp, field, method, revision=None, event_id=None):
         if dataset == "live":
             snapshot = self.live.snapshot
             if snapshot is None or snapshot["revision"] != revision or stamp not in snapshot["frames"]:
                 raise ValueError("Прогноз обновился. Откройте свежие сроки.")
             points = snapshot["frames"][stamp]
+        elif dataset == "storm":
+            revision, frames = self.storm_frames(event_id)
+            if stamp not in frames or field not in STORM_FIELDS:
+                raise ValueError("Такого слоя или срока в исторической серии нет.")
+            points = frames[stamp]
         else:
             revision, points = self.points(dataset, stamp)
         palette = describe(field, dataset)
         value = np.asarray([p[field] for p in points], dtype=float)
-        grid = interpolate(self.neighbors(tuple(p["coordinates"] for p in points), 15000 if dataset == "live" else 1000), value, method, field == "wind_deg")
+        limit = {"storm": 18000, "live": 15000}.get(dataset, 1000)
+        grid = interpolate(self.neighbors(tuple(p["coordinates"] for p in points), limit), value, method, field == "wind_deg")
         low, high = palette["range"]
         normal = np.clip((np.nan_to_num(grid, nan=low)-low)/(high-low), 0, 1)
         rgb = np.array([tuple(bytes.fromhex(c[1:])) for c in palette["colors"]])
@@ -161,6 +192,6 @@ class WeatherAtlas:
                 "overlay": "data:image/png;base64,"+b64encode(image.getvalue()).decode(), "points": points}
 
 
-    def frame(self, dataset, stamp, field, method):
+    def frame(self, dataset, stamp, field, method, event_id=None):
         revision = self.live.get()["revision"] if dataset == "live" else None
-        return self._frame(dataset, stamp, field, method, revision)
+        return self._frame(dataset, stamp, field, method, revision, event_id)

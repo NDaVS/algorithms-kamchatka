@@ -34,7 +34,7 @@ def run(base, payload, output):
     endpoint = "/api/v1/operations/city/runs"
     submission = json.loads(read(endpoint, payload))
     path = f"{endpoint}/{submission['run_id']}"
-    deadline = time.monotonic() + 360
+    deadline = time.monotonic() + (900 if payload["source"] == "reanalysis" else 360)
     while time.monotonic() < deadline:
         result = json.loads(read(path))
         if result["status"] == "failed":

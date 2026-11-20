@@ -1,5 +1,6 @@
 """Deterministic tiled replay over the bounded Petropavlovsk urban scene."""
 from collections import Counter
+from base64 import b64encode
 from datetime import datetime, timedelta
 from functools import cached_property, lru_cache
 import gzip
@@ -7,6 +8,7 @@ from hashlib import file_digest
 import json
 from pathlib import Path
 import threading
+import zlib
 from typing import Literal
 from concurrent.futures import ThreadPoolExecutor
 
@@ -41,7 +43,7 @@ class CitySnowRequest(BaseModel):
     valid_at: AwareDatetime | None = None
     event_id: str | None = None
     district_id: str | None = None
-    zone: list[tuple[float, float]] | None = Field(default=None, min_length=3, max_length=24)
+    zone: list[tuple[float, float]] | None = Field(default=None, min_length=3, max_length=64)
     weather_revision: str | None = None
     snow_to_liquid_ratio: float = Field(default=10, ge=2, le=30)
     wind_from_deg: float = Field(default=270, ge=0, lt=360)
@@ -95,6 +97,11 @@ def remap(raw, count=TILE_CELLS):
     data = np.asarray(raw, dtype=float)
     indices = [np.minimum((np.arange(count)+.5)*cells/count, cells-1).astype(int) for cells in data.shape]
     return data[np.ix_(*indices)]
+
+
+def checkpoints(count):
+    step = 1 if count <= 6 else 12
+    return sorted({0, count-1, *range(step-1, count, step)})
 
 
 class CitySnow:
@@ -300,6 +307,26 @@ class CitySnow:
         with np.load(self._path(run_id, "npz")) as values:
             return dict(values)
 
+    @lru_cache(maxsize=8)
+    def surface(self, run_id, frame=None):
+        result = self.status(run_id)
+        if not result or result["status"] != "completed":
+            return None
+        data = self.probe_fields(run_id)
+        timeline = data.get("timeline", [])
+        snow = timeline[frame] if frame is not None and frame < len(timeline) else data["snow_cm"]
+        original_rows, original_cols = snow.shape
+        iy = np.rint(np.linspace(0, original_rows-1, min(132, original_rows))).astype(int)
+        ix = np.rint(np.linspace(0, original_cols-1, min(132, original_cols))).astype(int)
+        west, south, east, north = result["bounds"]
+        xs = west+(ix+.5)*(east-west)/original_cols
+        ys = north-(iy+.5)*(north-south)/original_rows
+        x, y = np.meshgrid(xs, ys)
+        heights = self.city.terrain.sample(x, y)
+        depth = np.where(np.isfinite(heights), snow[np.ix_(iy, ix)], np.nan)
+        return {"longitudes": xs.tolist(), "latitudes": ys.tolist(), "ground_m": rows_json(heights),
+                "snow_cm": rows_json(depth)}
+
     def probe(self, run_id, lon, lat, frame=None, nearby_m=0):
         result = self.status(run_id)
         if result is None or result["status"] != "completed":
@@ -377,7 +404,7 @@ class CitySnow:
             with self.lock:
                 self.jobs[run_id] = {"status": "running", "completed_tiles": done, "total_tiles": total}
         try:
-            result, full = self.run(spec, select, source, progress)
+            result, full, cumulative = self.run(spec, select, source, progress)
             self.output.mkdir(parents=True, exist_ok=True)
             replay_path = self._path(run_id, "json.gz")
             tmp = replay_path.with_suffix(".tmp")
@@ -387,8 +414,8 @@ class CitySnow:
             with npz.with_suffix(".tmp").open("wb") as stream:
                 columns = {key: np.asarray(full["grids"][key], dtype=np.float32) for key in
                            ("snow_cm", "weather_snow", "combined", "opposite_snow_cm")}
-                if full["timeline_grids"]:
-                    columns["timeline"] = np.asarray(full["timeline_grids"], dtype=np.float32)
+                if cumulative:
+                    columns["timeline"] = np.asarray(cumulative, dtype=np.float32)
                 np.savez_compressed(stream, **columns)
             npz.with_suffix(".tmp").replace(npz)
             summary = self._path(run_id, "json")
@@ -448,7 +475,9 @@ class CitySnow:
             tile = {"i": i, "j": j, "distance_to_source_m": point_distance, "hours": hours}
             tile_inputs.append(tile)
             representative = land.intersection(box(*bounds)).representative_point()
-            for index, hour in enumerate(hours):
+            times = checkpoints(len(hours))
+            for index, offset in enumerate(times):
+                hour = hours[offset]
                 if index == len(wind_frames):
                     wind_frames.append({"valid_at": hour.get("valid_at"), "points": []})
                 wind_frames[index]["points"].append({
@@ -496,14 +525,18 @@ class CitySnow:
                 fields[key][target] = np.where(valid, values, np.nan)
             if spec.source in {"reanalysis", "live"} and len(hours) > 1:
                 running = np.zeros_like(actual)
-                for frame, hour in enumerate(hours[:-1]):
+                start = 0
+                for frame, offset in enumerate(times[:-1]):
+                    block = hours[start:offset+1]
+                    start = offset+1
                     if frame == len(cumulative):
                         cumulative.append(np.full_like(fields["snow_cm"], np.nan, dtype=np.float32))
-                    if hour["snowfall_cm"] > 0:
-                        if hour["wind_speed_ms"] <= 2:
-                            running += hour["snowfall_cm"]
+                    snowfall = sum(h["snowfall_cm"] for h in block)
+                    if snowfall > 0:
+                        if all(h["wind_speed_ms"] <= 2 for h in block):
+                            running += snowfall
                         else:
-                            step = model.estimate(bounds, buildings, [hour], cells, True)
+                            step = model.estimate(bounds, buildings, block, cells, True)
                             running += np.nan_to_num(remap(step["snow_depth_cm"], cells))
                     cumulative[frame][target] = np.where(valid, running, np.nan)
             stats["computed_tiles"] += 1
@@ -571,13 +604,18 @@ class CitySnow:
                               "city_revision": city.data_revision, "boundary_sha256": file_hash(BOUNDARY),
                               "graph_version": roads["metadata"]["graph_version"], "algorithm": METHOD}}
         peak = float(np.nanmax(fields["snow_cm"])) if np.isfinite(fields["snow_cm"]).any() else 0
-        snow_scale = min(30, max(5, int(np.ceil(peak/5))*5))
+        snow_scale = max(5, int(np.ceil(peak/(20 if peak > 50 else 5)))*(20 if peak > 50 else 5))
         scales = {"snow_cm": snow_scale, "drift_cm": 8, "opposite_snow_cm": snow_scale, "weather_snow": snow_scale,
                   "weather_wind": 20, "weather_distance": 15}
         result = {**raw, "scales": scales, "overlays": {
             key: overlay(np.clip(field/scales.get(key, 1), 0, 1)) for key, field in fields.items()}}
         result["clipped"] = [key for key, limit in scales.items() if np.any(fields[key] > limit)]
         result["timeline"] = [overlay(np.clip(field/snow_scale, 0, 1)) for field in cumulative]
-        replay = {**raw, "tiles": tile_inputs, "grids": {k: rows_json(v) for k, v in fields.items()},
-                  "timeline_grids": [rows_json(field) for field in cumulative]}
-        return result, replay
+        replay = {**raw, "tiles": tile_inputs, "grids": {k: rows_json(v) for k, v in fields.items()}}
+        if len(cumulative) > 5:
+            replay["timeline_binary"] = {"encoding": "base64+zlib+float32le", "shape": [rows, cols], "frames": [
+                b64encode(zlib.compress(frame.astype("<f4", copy=False).tobytes(), 1)).decode() for frame in cumulative
+            ]}
+        else:
+            replay["timeline_grids"] = [rows_json(field) for field in cumulative]
+        return result, replay, cumulative

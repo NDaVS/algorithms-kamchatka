@@ -61,7 +61,7 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
     api.state.store = store
     snow_study = SnowStudy(city, archive)
     city_snow = CitySnow(snow_study, store.path.parent / "citywide")
-    atlas_view = WeatherAtlas(archive.root, lambda: city_snow.land)
+    atlas_view = WeatherAtlas(archive.root, lambda: city_snow.land, lambda: city_snow.storms)
     city_snow.atlas = atlas_view
     api.state.city_snow = city_snow
 
@@ -101,12 +101,12 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
         return atlas_view.catalog()
 
     @api.get("/api/v1/operations/atlas/frame")
-    def atlas_frame(dataset: Literal["forecast", "history", "live"], valid_at: AwareDatetime,
-                    field: str = "snow", method: Literal["idw", "nearest"] = "idw"):
+    def atlas_frame(dataset: Literal["forecast", "history", "live", "storm"], valid_at: AwareDatetime,
+                    field: str = "snow", method: Literal["idw", "nearest"] = "idw", event_id: str | None = None):
         if field not in FIELDS:
             raise HTTPException(422, "Неизвестный слой погоды.")
         try:
-            return atlas_view.frame(dataset, valid_at, field, method)
+            return atlas_view.frame(dataset, valid_at, field, method, event_id)
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
         except httpx.HTTPError as error:
@@ -152,9 +152,19 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
             raise HTTPException(404, "Файл расчёта не найден.")
         return FileResponse(path, media_type="application/gzip", filename=f"city-snow-{run_id}.json.gz")
 
+    @api.get("/api/v1/operations/city/runs/{run_id}/surface")
+    def city_snow_surface(run_id: str, frame: int | None = Query(default=None, ge=0, le=64)):
+        try:
+            result = city_snow.surface(run_id, frame)
+        except (ValueError, FileNotFoundError) as error:
+            raise HTTPException(404, "Слой снега недоступен.") from error
+        if result is None:
+            raise HTTPException(404, "Расчёт не найден.")
+        return result
+
     @api.get("/api/v1/operations/city/runs/{run_id}/sample")
     def sample_city_snow(run_id: str, lon: float = Query(ge=-180, le=180),
-                        lat: float = Query(ge=-90, le=90), frame: int | None = Query(default=None, ge=0, le=5),
+                        lat: float = Query(ge=-90, le=90), frame: int | None = Query(default=None, ge=0, le=64),
                         nearby_m: int = Query(default=0, ge=0, le=30)):
         try:
             result = city_snow.probe(run_id, lon, lat, frame, nearby_m)

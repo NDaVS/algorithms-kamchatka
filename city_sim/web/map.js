@@ -261,6 +261,21 @@ export function createMap(metadata, onAreaChange, snowDetails) {
     viewButton.setAttribute('aria-pressed', String(pitch > 1));
   }
   map.on('pitch', updatePitch);
+  const mapContainer = map.getContainer();
+  let trackpadUntil = 0;
+  mapContainer.addEventListener('wheel', event => {
+    if (event.ctrlKey || event.metaKey) return;
+    const vertical = Math.abs(event.deltaY);
+    const now = performance.now();
+    const pixelScroll = event.deltaMode === WheelEvent.DOM_DELTA_PIXEL &&
+      (vertical < 100 || now < trackpadUntil) && vertical >= Math.abs(event.deltaX);
+    if (!vertical || (!event.altKey && !pixelScroll)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (pixelScroll) trackpadUntil = now + 160;
+    const delta = Math.max(-55, Math.min(55, event.deltaY));
+    map.setPitch(Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() + delta * .22)));
+  }, { capture: true, passive: false });
   updatePitch();
 
   const areaSelect = $('area');
