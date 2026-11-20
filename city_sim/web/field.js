@@ -19,7 +19,7 @@ export class FieldLayer {
   setData(payload, mode) {
     this.payload = payload;
     this.mode = mode;
-    this.refresh();
+    return this.refresh();
   }
 
   refresh() {
@@ -69,6 +69,10 @@ export class FieldLayer {
           scale * (fields.velocity_up_mps?.[i] ?? 0)], idx * 3);
         colors.push(color.r, color.g, color.b);
       }
+    }
+    if (!active.length) {
+      this.map.triggerRepaint();
+      return null;
     }
     const geometry = new THREE.BufferGeometry();
     if (this.mode === 'wind') {
