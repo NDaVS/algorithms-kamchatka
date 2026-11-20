@@ -21,3 +21,10 @@
 !data/pkc/*.json
 !requirements-city-sim.txt
 **/__pycache__/
+
+!city_sim/.state/
+!city_sim/.state/danil/
+!city_sim/.state/danil/kernels/
+!city_sim/.state/danil/kernels/*.json
+!city_sim/.state/danil/snowmap/
+!city_sim/.state/danil/snowmap/*.py

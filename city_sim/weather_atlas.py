@@ -8,7 +8,7 @@ from io import BytesIO
 from math import isfinite
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 from shapely import intersects_xy
 
 from weather_coverage.heatmap_fields import FIELDS, SOURCE_FIELDS, shown_value
@@ -102,8 +102,8 @@ class WeatherAtlas:
                                                     **{k: hour[v] for k, v in STORM_FIELDS.items()}})
         return event["raw_sha256"], frames
 
-    def live_catalog(self):
-        snapshot = self.live.get()
+    def live_catalog(self, refresh=False):
+        snapshot = self.live.get(refresh)
         return {"title": PROVIDER, "terms": [t.isoformat() for t in sorted(snapshot["frames"])],
                 "fields": {field: describe(field, "live") for field in FIELDS},
                 "retrieved_at": snapshot["retrieved_at"].isoformat(), "sha256": snapshot["revision"],
@@ -162,10 +162,10 @@ class WeatherAtlas:
                 "dist": meters, "indices": np.where(meters <= limit, ids, -1)}
 
     @lru_cache(maxsize=32)
-    def _frame(self, dataset, stamp, field, method, revision=None, event_id=None):
+    def _frame(self, dataset, stamp, field, method, revision=None, event_id=None, haze=False):
         if dataset == "live":
-            snapshot = self.live.snapshot
-            if snapshot is None or snapshot["revision"] != revision or stamp not in snapshot["frames"]:
+            snapshot = self.live.by_revision(revision)
+            if stamp not in snapshot["frames"]:
                 raise ValueError("Прогноз обновился. Откройте свежие сроки.")
             points = snapshot["frames"][stamp]
         elif dataset == "storm":
@@ -185,13 +185,19 @@ class WeatherAtlas:
         positions = np.linspace(0, 1, len(rgb))
         tone = np.stack([np.interp(normal, positions, c) for c in rgb.T], axis=-1)
         rgba = np.dstack([tone, 215*np.isfinite(grid)]).astype(np.uint8)
+        bitmap = Image.fromarray(rgba)
+        if haze:
+            opacity = (180*np.power(normal, 1.5)*np.isfinite(grid)).astype(np.uint8)
+            bitmap = Image.new("RGBA", (grid.shape[1], grid.shape[0]), "#e9f1fb")
+            bitmap.putalpha(Image.fromarray(opacity).filter(ImageFilter.GaussianBlur(2)))
         image = BytesIO()
-        Image.fromarray(rgba).save(image, format="PNG")
+        bitmap.save(image, format="PNG")
         return {"source": DATASETS[dataset], "valid_at": stamp.astimezone(ZONE).isoformat(),
                 "sha256": revision, "bounds": BOUNDS, "field": palette, "grid_cells": int(np.isfinite(grid).sum()),
                 "overlay": "data:image/png;base64,"+b64encode(image.getvalue()).decode(), "points": points}
 
 
-    def frame(self, dataset, stamp, field, method, event_id=None):
-        revision = self.live.get()["revision"] if dataset == "live" else None
-        return self._frame(dataset, stamp, field, method, revision, event_id)
+    def frame(self, dataset, stamp, field, method, event_id=None, revision=None, haze=False):
+        if dataset == "live" and not revision:
+            revision = self.live.get()["revision"]
+        return self._frame(dataset, stamp, field, method, revision, event_id, haze)

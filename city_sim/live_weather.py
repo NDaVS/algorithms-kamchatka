@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
+import os
 from threading import Lock
 
 import httpx
@@ -18,18 +19,23 @@ VARIABLES = {"temp": "temperature_2m", "feels_like": "apparent_temperature", "wi
              "visibility": "visibility", "humidity": "relative_humidity_2m", "clouds": "cloud_cover",
              "pop": "precipitation_probability", "precip": "precipitation"}
 
+class ForecastRevisionError(ValueError):
+    """The request refers to a different forecast snapshot."""
+
 
 class LiveWeather:
     def __init__(self):
         self.snapshot = None
+        self.recent = {}
         self.lock = Lock()
 
-    def get(self):
+    def get(self, refresh=False):
         with self.lock:
             now = datetime.now(timezone.utc)
-            if self.snapshot and now-self.snapshot["retrieved_at"] < timedelta(minutes=20):
+            age = timedelta(seconds=5) if refresh else timedelta(minutes=20)
+            if self.snapshot and now-self.snapshot["retrieved_at"] < age:
                 return self.snapshot
-            response = httpx.get(URL, params={
+            response = httpx.get(os.getenv("CITY_SIM_FORECAST_URL") or URL, params={
                 "latitude": ",".join(str(p[1]) for p in COORDINATES),
                 "longitude": ",".join(str(p[0]) for p in COORDINATES),
                 "hourly": ",".join(VARIABLES.values()), "wind_speed_unit": "ms",
@@ -53,4 +59,14 @@ class LiveWeather:
             revision = sha256(json.dumps(weather, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
             self.snapshot = {"retrieved_at": now, "revision": revision,
                              "frames": frames, "provider_locations": len(stations)}
+            self.recent.pop(revision, None)
+            self.recent[revision] = self.snapshot
+            while len(self.recent) > 4:
+                self.recent.pop(next(iter(self.recent)))
             return self.snapshot
+
+    def by_revision(self, revision):
+        with self.lock:
+            if revision not in self.recent:
+                raise ForecastRevisionError("Эта версия погоды больше не в памяти. Обновите прогноз.")
+            return self.recent[revision]

@@ -15,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .city_snow import CitySnow, CitySnowRequest
 from .geodata import BOUNDS, DATA, PILOT, ROOT, CityData
+from .live_weather import ForecastRevisionError
 from .physics import HttpWindSolver, SolverNotConnected, UnavailableWindSolver, display_field, sample_assets, solver_request
 from .schema import (AssetFieldResult, CitySnapshot, Region, RunRecord, ScenarioCreate, ScenarioRecord, WeatherSample,
                      WeatherSource, WindFieldResult, WindRequest)
@@ -67,8 +68,13 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
 
     @api.get("/api/v1/health")
     def health():
+        try:
+            snow_study.engine
+            model_ready = True
+        except (FileNotFoundError, ImportError):
+            model_ready = False
         return {"status": "ok", "solver_connected": not isinstance(api.state.wind_solver, UnavailableWindSolver),
-                "terrain_loaded": bool(city.terrain.metadata), "snow_solver_connected": snow_study.available}
+                "terrain_loaded": bool(city.terrain.metadata), "snow_solver_connected": model_ready}
 
     @api.get("/api/v1/operations/weather")
     def operation_weather(period: Literal["evening", "night"] = "evening"):
@@ -102,20 +108,25 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
 
     @api.get("/api/v1/operations/atlas/frame")
     def atlas_frame(dataset: Literal["forecast", "history", "live", "storm"], valid_at: AwareDatetime,
-                    field: str = "snow", method: Literal["idw", "nearest"] = "idw", event_id: str | None = None):
+                    field: str = "snow", method: Literal["idw", "nearest"] = "idw", event_id: str | None = None,
+                    revision: str | None = None, haze: bool = False):
         if field not in FIELDS:
             raise HTTPException(422, "Неизвестный слой погоды.")
+        if haze and field != "clouds":
+            raise HTTPException(422, "Дымка использует поле облачности.")
         try:
-            return atlas_view.frame(dataset, valid_at, field, method, event_id)
+            return atlas_view.frame(dataset, valid_at, field, method, event_id, revision, haze)
+        except ForecastRevisionError as error:
+            raise HTTPException(409, str(error)) from error
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
         except httpx.HTTPError as error:
             raise HTTPException(503, "Поставщик свежего прогноза сейчас недоступен.") from error
 
     @api.get("/api/v1/operations/atlas/live")
-    def live_atlas_catalog():
+    def live_atlas_catalog(refresh: bool = False):
         try:
-            return atlas_view.live_catalog()
+            return atlas_view.live_catalog(refresh)
         except (httpx.HTTPError, ValueError, KeyError) as error:
             raise HTTPException(503, "Поставщик свежего прогноза сейчас недоступен.") from error
 
@@ -127,6 +138,8 @@ def make_app(db_path=None, building_path=None, graph_path=None, solver=None, wea
             raise HTTPException(503, str(error)) from error
         except httpx.HTTPError as error:
             raise HTTPException(503, "Поставщик свежего прогноза сейчас недоступен.") from error
+        except ForecastRevisionError as error:
+            raise HTTPException(409, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         except RuntimeError as error:

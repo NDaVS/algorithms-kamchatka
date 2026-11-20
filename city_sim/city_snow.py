@@ -24,6 +24,7 @@ from winter_audit.relief import distance
 from .building_evidence import load_json
 from .geodata import ROOT, polygons
 from .operations import AREAS, POLICY, ZONE, digest, weather_status
+from .live_weather import ForecastRevisionError
 from .snow_experiment import ENGINE_LOCK, overlay, rows_json
 from .terrain import BOUNDS, DATA, TO_GEOGRAPHIC, TO_METRIC
 
@@ -231,7 +232,7 @@ class CitySnow:
                 raise ValueError("Прямой прогноз недоступен.")
             snapshot = self.atlas.live.get()
             if spec.weather_revision and spec.weather_revision != snapshot["revision"]:
-                raise ValueError("Прогноз обновился. Обновите сроки на карте.")
+                raise ForecastRevisionError("Прогноз уже изменился. Обновите сроки на карте.")
             stamps = [spec.valid_at+timedelta(hours=i) for i in range(spec.hours)]
             if any(stamp not in snapshot["frames"] for stamp in stamps):
                 raise ValueError("Для этого срока не помещается весь интервал. Выберите более ранний час.")
@@ -290,7 +291,11 @@ class CitySnow:
                     "atlas_sha256": sorted({r.weather.data_revision for r in forecasts})}
 
     def identity(self, spec, source):
-        return digest({"input": spec.model_dump(mode="json"), "weather": source,
+        scenario = spec.model_dump(mode="json")
+        if spec.source == "live":
+            source = {key: value for key, value in source.items() if key != "retrieved_at"}
+            scenario["weather_revision"] = source["atlas_sha256"]
+        return digest({"input": scenario, "weather": source,
                        "dataset": self.city.data_revision, "model": ENGINE_LOCK,
                        "boundary": file_hash(BOUNDARY), "method": METHOD})
 
