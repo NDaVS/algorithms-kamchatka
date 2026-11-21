@@ -2,7 +2,7 @@
 
 Самостоятельный локальный продукт: выбор площадок из конечного каталога, целочисленное распределение снега, проверяемый пробег и альтернативы. Не реестр действующих полигонов, не правовое заключение, не VRP/расписание парка. Все входные объёмы/площадки демо синтетические; сеть Камчатки — фиксированный снимок OSM. **«Север» не нужен для запуска.**
 
-**v4.8.1 (закрытие доступных критериев приёмки; математическое ядро v4.7)** · API JSON v1.0 · Node.js 22+ · Python 3.13 + SciPy. [Статус](docs/STATUS.md) · [Архитектура репозитория](docs/ARCHITECTURE.md) · [API](docs/API.md) · [Алгоритм](docs/ALGORITHM.md) · [История](CHANGELOG.md) · [Handoff](docs/HANDOFF.md) · [Актуальный план и блокеры](docs/07_IMPLEMENTATION_PLAN.md).
+**v4.10 (рабочее пространство точной карты; математическое ядро v4.7)** · API JSON v1.0 · Node.js 22+ · Python 3.13 + SciPy. [Статус](docs/STATUS.md) · [Архитектура репозитория](docs/ARCHITECTURE.md) · [API](docs/API.md) · [Алгоритм](docs/ALGORITHM.md) · [История](CHANGELOG.md) · [Handoff](docs/HANDOFF.md) · [Актуальный план и блокеры](docs/07_IMPLEMENTATION_PLAN.md).
 
 ## Быстрый старт
 
@@ -16,9 +16,9 @@ npm test
 npm start
 ```
 
-Linux/macOS: при необходимости `python3` вместо `python`; для venv укажите путь к Python через `SNOW_PYTHON`. Windows PowerShell: `$env:SNOW_PYTHON='C:\path\to\python.exe'`. Legacy карта может запускаться через `START.bat` без Python; полные тесты и точный solver требуют Python. Сервер слушает 127.0.0.1:8793; при занятом порте задайте `PORT`.
+Linux/macOS: при необходимости `python3` вместо `python`; для venv укажите путь к Python через `SNOW_PYTHON`. Windows PowerShell: `$env:SNOW_PYTHON='C:\path\to\python.exe'`. `START.bat` запускает локальный сайт; для точного режима по умолчанию и полных тестов требуется Python. Без Python вручную выберите legacy. Сервер слушает 127.0.0.1:8793; при занятом порте задайте `PORT`.
 
-- `http://127.0.0.1:8793/` — прежняя карта и **приблизительная** эвристика. Исторические скриншоты и walkthrough: [LEGACY_UI_GUIDE](docs/LEGACY_UI_GUIDE.md).
+- `http://127.0.0.1:8793/` — основная карта с точным Top-K по умолчанию, выбором количества площадок, переносом, отклонениями и экспортом результатов. Legacy — отдельный явно приблизительный режим. Исторические скриншоты и walkthrough: [LEGACY_UI_GUIDE](docs/LEGACY_UI_GUIDE.md).
 - `http://127.0.0.1:8793/exact.html` — отдельный точный JSON-интерфейс (safe preset), без подмены solver эвристикой.
 - `POST /api/v1/optimize` — независимый API; `GET /api/v1/networks` — доступные ID/version/hash.
 
@@ -58,7 +58,7 @@ node examples/v45/integration.mjs
 apps/
   api/             # HTTP, registry, isolated request worker
   cli/             # JSON command-line adapter
-  web/             # unchanged legacy map and exact JSON UI
+  web/             # exact map, explicit legacy mode, advanced JSON UI
 packages/
   contracts/       # domain constraints, hashes, schemas/
   optimization/    # exact and legacy solver orchestration; independent checker
@@ -80,11 +80,11 @@ solver/            # compatibility requirements and worker launcher
 
 [ARCHITECTURE](docs/ARCHITECTURE.md) describes the **implemented** R1–R4 modular monolith and outstanding requirements. [CODE_MAP](docs/CODE_MAP.md) locates canonical implementations; [CONTRIBUTING](CONTRIBUTING.md) describes the review/release workflow. Public Node imports, HTTP URLs and old `node src/cli.mjs`, `node src/server.mjs`, `START.bat` and `python -m pip install -r solver/requirements.txt` commands remain available. Direct paths to raw data and schemas moved (see [data index](data/README.md)); no duplicate snapshots.
 
-Linux regression v4.7: 103/103 tests (97 prior + six v4.7). The v4.6 migration had 97/97 and four architecture tests. 24 relocated payload files (UI/data/schemas/MILP worker and pins) match v4.5 byte-for-byte. Browser smoke повторно запущен в v4.8, Chromium navigation blocked by environment policy; фактическая браузерная приёмка BLOCKED_ENVIRONMENT; Windows и GitHub Actions приостановлены владельцем. CI defines Ubuntu/Windows matrices for unit/integration/schema and actual browser smoke, plus manual dispatch; remote CI not executed. `npm run check:manifest` verifies packaged release bytes. `node tools/benchmark-v47.mjs <unique-label> bounded_enumeration` воспроизводит новый benchmark (без аргумента стратегии — все три). Результаты v4.6 исторические; актуальная проверка v4.7 в [STATUS](docs/STATUS.md) и [benchmarks/v47](docs/benchmarks/v47/acceptance.md).
+Linux regression v4.7: 103/103 tests (97 prior + six v4.7). The v4.6 migration had 97/97 and four architecture tests. 24 relocated payload files (UI/data/schemas/MILP worker and pins) match v4.5 byte-for-byte. Browser smoke повторно запущен в v4.8, Chromium navigation blocked by environment policy; фактическая браузерная приёмка BLOCKED_ENVIRONMENT; Windows и GitHub Actions приостановлены владельцем. CI defines Ubuntu/Windows matrices for unit/integration/schema and actual browser smoke, plus manual dispatch; remote CI not executed. `npm run check:manifest` verifies packaged release bytes. `node tools/benchmark-v47.mjs <unique-label> bounded_enumeration` воспроизводит новый benchmark (без аргумента стратегии — все три). Результаты v4.6 исторические; актуальная проверка v4.10 в [STATUS](docs/STATUS.md) и [benchmarks/v410](docs/benchmarks/v410/acceptance.md).
 
 ## GitHub и история
 
-Рекомендуемый приватный независимый репозиторий `SnowSite-Kamchatka`. Восстановите текущую ветку из history.bundle (не `git init`). См. [GITHUB_SETUP](docs/10_GITHUB_SETUP.md); отдалённая публикация не выполнена. Внутри ZIP сохранены CHANGELOG и полный журнал сессий; Git bundle передаётся отдельно. Проверяйте отсутствие закрытых данных и лицензии перед отправкой. Не используйте репо «Север».
+SnowSite размещается как независимый компонент `shared/snowsite/` общего репозитория algorithms-kamchatka. Для автономной разработки используйте отдельную копию SnowSite. Восстановите текущую ветку из history.bundle (не `git init`). См. [GITHUB_SETUP](docs/10_GITHUB_SETUP.md); Интеграционные изменения отправлять отдельными PR, не перезаписывать чужие файлы. Внутри ZIP сохранены CHANGELOG и полный журнал сессий; Git bundle передаётся отдельно. Проверяйте отсутствие закрытых данных и лицензии перед отправкой. Не используйте репо «Север».
 
 ## Лицензии и происхождение данных
 
@@ -100,7 +100,7 @@ python -m playwright install chromium
 npm run test:browser
 ```
 
-`test:contracts` проверяет все шесть локальных JSON Schema и 26 положительных/отрицательных проверок экземпляров, включая свежие ответы CLI на двух графах, без загрузки сторонних схем. Это dev/CI зависимости, не требуется для solver. В Linux пройдено; фактическая Windows/браузерная приёмка остаётся открытой. В Linux CI Playwright использует `--with-deps`; Windows — обычную установку Chromium. После размещения репозитория владелец может запустить workflow вручную, сохранить реальные логи и только затем отметить соответствующую внешнюю проверку пройденной. Пока Windows/CI не входят в активный план.
+`test:contracts` проверяет все шесть локальных JSON Schema и 30 положительных/отрицательных проверок экземпляров, включая свежие ответы CLI на двух графах, без загрузки сторонних схем. Это dev/CI зависимости, не требуется для solver. В Linux пройдено; фактическая Windows/браузерная приёмка остаётся открытой. В Linux CI Playwright использует `--with-deps`; Windows — обычную установку Chromium. После размещения репозитория владелец может запустить workflow вручную, сохранить реальные логи и только затем отметить соответствующую внешнюю проверку пройденной. Пока Windows/CI не входят в активный план.
 
 ### Единый отчёт приёмки (v4.8)
 
@@ -117,10 +117,20 @@ python tools/acceptance.py --mode browser --output runtime/acceptance-browser
 
 **Историческая приёмка v4.8:** локальная приёмка 104/104 теста, граф, 6 схем / 26 экземпляров, внешний SDK и checkout с имитацией autocrlf=true успешно проверены. Подробные отчёты: [v4.8 acceptance](docs/benchmarks/v48/acceptance.md). Реальная Windows/браузерная приёмка остаётся открытой, R5 ожидает требований, S5 — данных. Математическая модель и конечный каталог синтетики не изменены.
 
-## Актуальный план и оставшиеся блокеры (v4.8.1)
+## Актуальный план и оставшиеся блокеры (v4.10)
 
 План [07_IMPLEMENTATION_PLAN](docs/07_IMPLEMENTATION_PLAN.md) сводит исходные задачи S0–S5, R0–R5 и критерии обоих аудитов; новые задачи не добавлены. Дополнительно проверены HTTP cancellation (B07), missing Python failure и recovery (B21), компактное назначение миллиона рейсов и превышение лимита (B09). См. [фактический отчёт](docs/benchmarks/v481/acceptance.md).
 
-Отложено: Windows/GitHub Actions (решение владельца; его локальный Windows запуск — по его сообщению, не формальный PASS), фактические browser interactions (Chromium policy), S5/A08-DATA и GIS (без исследования), R5 (нет требований к развёртыванию, в том числе лимитам Python RSS). Дальнейших незаблокированных согласованных implementation tasks нет. Никаких автоматических новых задач, переработки frontend, математики или сбора данных.
+Отложено: Windows/GitHub Actions (решение владельца; его локальный Windows запуск — по его сообщению, не формальный PASS), фактические browser interactions (Chromium policy), S5/A08-DATA и GIS (без исследования), R5 (нет требований к развёртыванию, в том числе лимитам Python RSS). Согласованная синхронизация карты с точным API завершена в v4.9, UX-доводка по запросу владельца — в v4.10. Не начинать новых задач без решения владельца.
 
 **Итог v4.8.1:** 107/107 тестов, 6 схем и 26 проверок, pinned graph PASS. Предыдущие интеграционные и математические эталоны сохранены.
+
+### Демонстрация точной карты (v4.10)
+1. Откройте `/` после установки Python-зависимостей; исходный сценарий автоматически рассчитает Top-K для одной новой площадки.
+2. Установите число новых площадок 2, нажмите «Пересчитать». Для выбора из шести условных кандидатов нажмите «Демо: 2 + 2 из 6» и подтвердите замену сценария. Top-5 рассчитывается автоматически. То же демо можно импортировать из `examples/v49/map-editor-2plus2.json` через «Изменить условия → Файл».
+3. Переключайте варианты, отклоняйте кандидата или конкретную комбинацию с причиной и скачивайте историю. В редакторе задавайте альтернативу существующей площадке. Для greenfield удалите все existing и выберите число активных мест.
+4. Advanced JSON, грузовые профили и полная модель evidence — `/exact.html`, пример `examples/v49/map-api-2plus2.json`. Карта не отбрасывает расширенные условия молча. Ограничения карты сценарные, статус земли unknown. Нет автоматического fallback при ошибке/таймауте MILP. Браузерная визуальная приёмка остаётся открытой.
+
+Локальная регрессия v4.10: 114/114 Node tests, 6 JSON Schema / 30 проверок экземпляров, городской граф прежний. Реальный HTTP и harness событий DOM/Leaflet — PASS; визуальная проверка размеров, интерактивного Leaflet и доступности в настоящем Chromium ещё не выполнена. [Отчёт](docs/benchmarks/v410/acceptance.md).
+
+Пересчёт и отмена находятся перед результатами, карта остаётся рядом при прокрутке на широком экране; на узком экране панели идут последовательно. Выбор альтернатив клавишами стрелок, Enter/Space; активный вариант сохраняет фокус. Номера предварительного рейтинга не равны доказанному Top-K. На JSON-странице можно скачать исходный результат API.

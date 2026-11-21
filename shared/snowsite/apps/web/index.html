@@ -7,23 +7,24 @@
 </head><body>
 <a class="skip" href="#result-title">Перейти к результату</a>
 <header class="top">
-  <div class="brand"><div class="logo" aria-hidden="true">❄</div><div><h1>SnowSite</h1><span>Предварительный анализ снеговывоза · Камчатка</span></div></div>
+  <div class="brand"><div class="logo" aria-hidden="true"><svg viewBox="0 0 32 32" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M16 4v24M5.6 10l20.8 12M5.6 22 26.4 10M12 7l4 4 4-4M12 25l4-4 4 4M6 15l5-1-1-5M22 23l-1-5 5-1M6 17l5 1-1 5M22 9l-1 5 5 1"/></svg></div><div><h1>SnowSite</h1><span>Предварительный анализ снеговывоза · Камчатка</span></div></div>
   <nav class="top-actions" aria-label="Действия">
     <span class="chip amber">Демо-сценарий · данные условные</span>
     <button id="how-btn" type="button" class="ghost">Как работает</button>
-    <button id="edit-btn" type="button" class="ghost" aria-expanded="false" aria-controls="drawer">Изменить условия</button>
+    <button id="edit-btn" type="button" class="edit-action" aria-expanded="false" aria-controls="drawer">Изменить условия</button>
   </nav>
 </header>
 
-<section class="task" aria-label="Что сравниваем"><p id="task">Загрузка…</p></section>
+<section class="task" aria-label="Что сравниваем"><div><span class="eyebrow">Сценарий · Петропавловск-Камчатский</span><p id="task">Загрузка…</p></div><button id="demo-extended" class="secondary" type="button" disabled title="Заменяет текущий сценарий условным каталогом из 6 кандидатов">Демо: 2 + 2 из 6</button></section>
 
 <main class="board">
   <section class="mapcol" aria-label="Карта">
+    <div class="map-header"><div><span class="eyebrow">01 / Пространственный анализ</span><h2>Карта снеговывоза</h2></div><span class="map-note">OSM · локальный снимок</span></div>
     <div class="mapbox">
       <div id="map" role="application" aria-label="Карта города. Подробное текстовое описание маршрутов — в панели результата"></div>
       <div id="pick-banner" class="pick-banner" role="status" hidden></div>
       <button id="fit-map" type="button" class="fit">Показать всё</button>
-      <details class="legend" open>
+      <details class="legend">
         <summary>Что на карте</summary>
         <ul>
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#4aa8e0" stroke="#0d2330" stroke-width="2"/><text x="12" y="16" text-anchor="middle" font-size="11" font-weight="700" fill="#06202e">1</text></svg><span><b>Источник снега</b> (номер)</span></li>
@@ -37,22 +38,45 @@
       </details>
       <div class="map-credits">© OpenStreetMap contributors (ODbL) · Рельеф Mapzen / Tilezen · Leaflet</div>
     </div>
+    <div class="map-key" aria-label="Условные обозначения"><span><i class="key-src"></i> Источник</span><span><i class="key-base"></i> Действующая*</span><span><i class="key-cand"></i> Кандидат*</span><span><i class="key-loaded"></i> Туда</span><span><i class="key-empty"></i> Обратно</span><small>* Условные места</small></div>
   </section>
 
   <aside class="result" aria-labelledby="result-title">
-    <h2 id="result-title">Приблизительный расчёт (legacy)</h2>
-    <p class="helper">Эвристика, не доказанный минимум. <a href="/exact.html">Отдельный точный расчёт MILP</a>.</p>
+    <span class="eyebrow">02 / Настройка расчёта</span>
+    <h2 id="result-title">Точная оптимизация (MILP)</h2>
+    <div class="calc-controls">
+      <label for="calc-mode">Метод расчёта</label><select id="calc-mode"><option value="exact" selected>Точный Top-K (MILP)</option><option value="legacy">Приблизительная эвристика (legacy)</option></select>
+      <div id="exact-controls">
+        <div class="pair"><div><label for="new-count">Новых площадок</label><input id="new-count" type="number" min="0" max="30" step="1" value="1"></div><div><label for="top-k">Top-K</label><input id="top-k" type="number" min="1" max="50" step="1" value="5"></div></div>
+        <label for="time-limit">Лимит поиска, мс</label><input id="time-limit" type="number" min="1" max="120000" step="1" value="15000">
+        <p id="policy-summary" class="helper"></p>
+      </div>
+      <p id="legacy-help" class="helper" hidden>Legacy проверяет только добавление по одной площадке, не доказывает оптимальность и не применяет настройки Top-K. Если нужны ограничения и перенос, используйте MILP.</p>
+      <p id="mode-help" class="helper">Точный поиск по конечному каталогу. Требуется Python + SciPy. <a href="/exact.html">Расширенный JSON v1</a>.</p>
+    </div>
+    <div class="result-foot" id="run-actions">
+      <button id="compare" type="button" class="primary" disabled>Пересчитать</button>
+      <button id="cancel-solve" type="button" class="secondary" hidden>Отменить расчёт</button>
+      <p id="stats-status" class="status" role="status" aria-live="polite">Загрузка…</p>
+    </div>
+    <section class="result-section" aria-label="Результаты расчёта">
+    <div class="section-heading"><span class="eyebrow">03 / Результаты</span><h3>Конфигурации площадок</h3></div>
+    <p id="solver-status" class="status solver-summary" role="status" aria-live="polite"></p>
     <div id="variants" class="variants" role="group" aria-label="Вариант расчёта"></div>
     <p id="composition" class="composition"></p>
     <div id="headline" class="headline" aria-live="polite"></div>
     <div id="kpis" class="kpis"></div>
     <div id="sites-use" class="sites-use"></div>
+    <details id="exclusions-panel" class="more"><summary>Отклонения и повторный поиск</summary>
+      <label for="exclusion-reason">Причина отклонения (до 200 символов)</label><input id="exclusion-reason" type="text" maxlength="200" placeholder="Например: требуется проверка въезда">
+      <div id="exclusion-actions" class="exclusion-actions"></div><ul id="exclusions-list" class="reasons"></ul>
+      <p id="run-history-status" class="helper"></p><button id="export-runs" type="button" class="secondary">Скачать историю расчётов JSON</button>
+      <button id="clear-exclusions" type="button" class="secondary">Снять все отклонения</button>
+    </details>
+    <p id="route-status" class="status" role="status"></p>
     <details class="more"><summary>Маршруты текстом</summary><ul id="routes-text" class="routes-text"></ul></details>
     <details class="more"><summary>Причины и сравнение вариантов</summary><div id="details-body"></div></details>
-    <div class="result-foot">
-      <button id="compare" type="button" class="primary">Пересчитать</button>
-      <p id="stats-status" class="status" role="status" aria-live="polite">Загрузка…</p>
-    </div>
+    </section>
     <p class="legal">Модельный расчёт логистики на условных данных. Не проверяет земельную, санитарную и экологическую допустимость площадок и не оценивает экономию бюджета.</p>
   </aside>
 </main>
@@ -66,6 +90,7 @@
   </div>
   <section id="panel-points" role="tabpanel" aria-labelledby="tab-points">
     <div class="row"><button type="button" class="secondary" id="new-demand">+ Источник снега</button><button type="button" class="secondary" id="new-site">+ Кандидат</button></div>
+    <button type="button" class="secondary" id="new-existing">+ Условная действующая площадка</button>
     <p class="helper" id="pick-help">Нажмите кнопку, затем выберите место на дороге на карте. Панель закроется на время выбора.</p>
     <div class="entries" id="entries"></div>
   </section>
@@ -77,7 +102,8 @@
     <div class="pair"><div><label for="speed">Скорость, км/ч</label><input id="speed" type="number" min="1" value="20"></div><div><label for="rate">Тариф, ₽/ч</label><input id="rate" type="number" min="0" value="2100"></div></div>
   </section>
   <section id="panel-file" role="tabpanel" aria-labelledby="tab-file" hidden>
-    <p class="helper">Сценарий сохраняется в JSON-файл и загружается обратно. На сервере ничего не хранится.</p>
+    <p class="helper">Сценарий карты и настройки выбора сохраняются в JSON. Полный запрос v1 открывается на отдельной странице; расширенные ограничения не отбрасываются молча. На сервере ничего не хранится.</p>
+    <button id="export-exact" type="button" class="secondary">Скачать запрос API v1</button>
     <div class="row"><button id="export" type="button" class="secondary">Скачать JSON</button><label class="import secondary" for="import">Загрузить JSON<input id="import" type="file" accept=".json,application/json" hidden></label></div>
     <p class="helper">Сброс вернёт демо-сценарий и сотрёт ваши изменения (нужно нажать дважды).</p>
     <button id="reset" type="button" class="secondary danger">Сброс</button>
@@ -89,7 +115,7 @@
   <ol class="steps">
     <li><b>Откуда.</b> Голубые точки — места, откуда нужно вывезти снег, и сколько его там.</li>
     <li><b>Куда.</b> Оранжевые квадраты — условные действующие площадки, зелёные ромбы — места, которые мы рассматриваем как новые. Все они выдуманы для примера.</li>
-    <li><b>Сравнение.</b> Считаем рейсы и километры для базового варианта и для варианта «+ одна новая площадка». Кандидаты проверяются по одному, а не все сразу.</li>
+    <li><b>Сравнение.</b> Точный режим выбирает заданное число новых мест и ранжирует конфигурации. Действующие сохраняются, кроме явно заданных групп переноса. Без действующих — выбор с нуля. Legacy проверяет только по одному кандидату.</li>
   </ol>
   <details open><summary>Что считает модель</summary><ul>
     <li>Путь по дорогам OSM туда и обратно с учётом односторонних участков и закрытий; вместимость площадок; объём кузова и масса груза.</li>
@@ -98,8 +124,8 @@
   </ul></details>
   <details><summary>Чего модель НЕ делает</summary><ul>
     <li>Не проверяет, можно ли по закону и по санитарным нормам принимать снег на этом месте. Кандидат — только гипотеза для проверки по документам.</li>
-    <li>Не знает про очереди, погрузку и разгрузку, смены, повороты, ограничения по весу и высоте, состояние дорог.</li>
-    <li>Расчётный метод — эвристика (жадный проход и локальный поиск). Он не доказан как лучший для всего города.</li>
+    <li>Не знает про очереди, погрузку и разгрузку, смены, повороты, фактическое состояние дорог. Редактор карты поддерживает сценарные лимиты рейсов и типы снега; расширенные транспортные профили и внутриплощадочный пробег задаются в JSON v1.</li>
+    <li>Точный режим использует MILP и доказуемое отсечение; при таймауте рейтинг предварительный. Оптимальность относится только к заданному каталогу и модели. Legacy — эвристика без доказательства.</li>
     <li>Не считает «экономию бюджета». Километры и рубли движения — модельные значения на условных данных.</li>
   </ul></details>
   <details><summary>Данные</summary><p>Дороги — снимок OpenStreetMap от 19.11.2026 (© OpenStreetMap contributors, ODbL), рельеф Mapzen/Tilezen. Площадки, объёмы, скорость и тариф — сценарные.</p></details>

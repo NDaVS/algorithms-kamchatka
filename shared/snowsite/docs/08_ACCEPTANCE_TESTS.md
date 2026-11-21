@@ -1,9 +1,11 @@
-# Приёмка SnowSite — актуализация v4.8.1
+# Приёмка SnowSite — актуализация v4.10
 
-Главная матрица статусов и блокеров: [07_IMPLEMENTATION_PLAN](07_IMPLEMENTATION_PLAN.md). Актуальный локальный отчёт: [benchmarks/v481/acceptance.md](benchmarks/v481/acceptance.md). Исходные критерии B01–B23 и A00–A16 сохранены дословно в двух пакетах аудита; результаты v4.2–v4.8 неизменны. Старые значения legacy не заменяют exact baseline.
+Главная матрица статусов и блокеров: [07_IMPLEMENTATION_PLAN](07_IMPLEMENTATION_PLAN.md). Актуальный локальный отчёт: [benchmarks/v49/acceptance.md](benchmarks/v49/acceptance.md). Исходные критерии B01–B23 и A00–A16 сохранены дословно в двух пакетах аудита; результаты v4.2–v4.8 неизменны. Старые значения legacy не заменяют exact baseline.
 
 - Полный локальный gate: `npm run check`, `npm test`, `npm run test:contracts`, `npm run check:manifest` (после сборки). Python и dev-зависимости по README. Не требуется ни внешний сервер, ни сеть.
 - B07 HTTP cancellation и B21 missing-interpreter fault-injection пройдены; B09 1 млн м³ / рейсов в одной строке назначения, отказ при 1 000 001 м³, измеренный RSS, без обещания OS cap Python. Команда `node --test tests/v481-acceptance.test.mjs`.
+- v4.10: 114/114, 6 схем/30 экземпляров; ранний пересчёт, подтверждённое демо, клавиатура, JSON-экспорт (HTTP + DOM harness). Реальная визуальная проверка остаётся открытой. [Evidence](benchmarks/v410/acceptance.md).
+- v4.9: точный HTTP и DOM/Leaflet harness, переключение вариантов, маршруты, отказ без fallback, исключения, перенос и greenfield — PASS. 112/112 тестов, 30 проверок экземпляров.
 - B22/A14 остаётся фактическим браузерным gate: исторический HTTP/JS smoke не заменяет проверку интеракций. В текущей среде Chromium policy заблокировала навигацию; не повторять без изменения окружения. Windows/CI пока приостановлены владельцем, хотя локальный Windows запуск у него работает по его сообщению.
 - S5 / GIS не являются критерием готовности синтетического MVP. Фактические данные и разрешение на исследование не получены. R5 только после требований.
 

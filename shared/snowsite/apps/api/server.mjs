@@ -20,8 +20,14 @@ export function startServer(port=Number(process.env.PORT||8793),{registryFile=pr
     try{
       const url=new URL(req.url,'http://localhost');
       const json=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
+      // Two browser-safe modules, served from their single canonical source. No generic package/file access.
+      const browserModules={'/lib/routing/engine.mjs':'packages/routing/engine.mjs','/lib/contracts/validate.mjs':'packages/contracts/validate.mjs'};
+      if(req.method==='GET'&&Object.hasOwn(browserModules,url.pathname)){
+        const data=readFileSync(join(dir,browserModules[url.pathname]));res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});return res.end(data);
+      }
       if(req.method==='GET'&&url.pathname==='/api/health')return json({ok:true,version:'snow-site-0.1',apiVersion:'1.0',networkId:networkMeta.id,networkHash:networkMeta.hash,networkVersion:network.version});
       if(req.method==='GET'&&url.pathname==='/api/demo')return json(demo);
+      if(req.method==='GET'&&url.pathname==='/demo-extended.json')return json(JSON.parse(readFileSync(join(dir,'examples/v49/map-editor-2plus2.json'),'utf8')));
       if(req.method==='GET'&&url.pathname==='/api/network')return json(network);
       if(req.method==='GET'&&url.pathname==='/api/v1/networks')return json({schemaVersion:'1.0',networks:registry.list()});
       if(req.method==='POST'&&['/api/compare','/api/v1/optimize'].includes(url.pathname)){

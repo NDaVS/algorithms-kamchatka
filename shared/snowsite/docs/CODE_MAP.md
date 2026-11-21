@@ -1,4 +1,4 @@
-# Canonical code map — v4.8.1
+# Canonical code map — v4.10
 
 | Path | Responsibility |
 |---|---|
@@ -14,7 +14,7 @@
 | `workers/milp-python/worker.py`, `exact-adapter.mjs` | Sparse MILP and cancellable subprocess protocol |
 | `apps/api/server.mjs`, `network-registry.mjs`, `optimize-worker.mjs` | HTTP, graph registry, thread isolation |
 | `apps/cli/cli.mjs` | CLI and exit codes |
-| `apps/web/` | Legacy map and exact UI; same bytes as v4.5 |
+| `apps/web/` | Exact map default, explicit legacy mode, advanced JSON UI |
 | `packages/optimization/public.mjs`, `packages/catalog/index.mjs` | Stable Node exports |
 | `src/`, `solver/` | Compatibility wrappers only (not alternate algorithms) |
 | `data/snapshots/`, `data/fixtures/`, `data/evidence/` | Immutable graph, fictional demo, historical source records |
@@ -24,7 +24,7 @@ Regression `tests/v46-architecture.test.mjs` checks dependency direction, checke
 Additional acceptance at `tests/v481-acceptance.test.mjs`: B07 HTTP disconnect / `apps/api/server.mjs` cancellation → `optimize-worker.mjs` → `workers/milp-python/exact-adapter.mjs` child exit; B21 missing executable solver fault in CLI/HTTP and recovery; B09 compact million-trip solve via v1 and resource rejection. No production code change. See `benchmarks/v481/acceptance.md`.
 
 ---
-Historical implementation notes below preserve the paths used at those versions. Follow the canonical map above for v4.8.1.
+Historical implementation notes below preserve the paths used at those versions. Follow the canonical map above for v4.9.
 
 # Code map v4.2
 | Path | Responsibility | Main tests |
@@ -96,3 +96,7 @@ New public exports resolve directly to canonical packages; four architecture reg
 `apps/api/server.mjs` validates and reads regular static files before headers, resolves the public-root boundary and protects the error path from duplicate headers. `tests/v48-http.test.mjs` covers the directory-crash reproduction, health afterward and normal assets. `.gitattributes` preserves release bytes across checkout configurations.
 `tools/acceptance.py` runs scoped core/browser/all gates using explicit commands, saves JSON status/OS/runtime and separate raw logs in a new directory; `.github/workflows/check.yml` runs the same runner and uploads artifacts even on failures. No deployment or auto-download.
 `examples/v48/external-sdk.mjs` and its README demonstrate installing the local package in a separate consumer; actual result in `docs/benchmarks/v48/external-sdk-result.json`.
+
+v4.9: `apps/web/lib/exact-map.js` maps editor state → safe v1 request and checked aggregate solution → routes and display. `apps/web/app.js` wires UI actions and HTTP, history, exports. `apps/api/server.mjs` serves only `/lib/routing/engine.mjs` and `/lib/contracts/validate.mjs` from canonical packages. `tests/v49-map*.test.mjs` test adapter, real HTTP and DOM event wiring; `tools/browser-smoke.py` updated for actual browser gate (not run here).
+
+v4.10: `apps/web/index.html` and `style.css` provide the map workspace; `app.js` adds confirmed demo load and focus preservation; `exact.html` / `exact.js` share styles and export the received response. `tests/v410-ui.test.mjs` checks structure and real HTTP/JSON wiring.
