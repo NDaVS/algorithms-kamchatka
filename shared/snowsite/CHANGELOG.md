@@ -128,3 +128,13 @@
 - Restored v4.8 `dd1b56a`; 328/328 baseline manifest, pinned graph and 104/104 tests verified. Added targeted tests for existing B07 (HTTP disconnect, stalled child actually exits, busy slot released), B21 (missing interpreter typed HTTP/CLI failure and exact recovery), B09 (one million trips in one aggregate row, 2988-byte response, demand above cap rejected).
 - Measured compact test max RSS 123776 KiB, 1.45s; not whole tree peak or OS hard cap. Three focused tests and full 107/107 regression PASS, six schemas / 26 checks PASS. No runtime, mathematical, schema, graph or data change. `docs/benchmarks/v481/acceptance.md` and raw logs.
 - Owner pauses Windows/GitHub Actions, no research or new backlog. Live implementation/acceptance plans updated to reflect finished work; historical checklists explicitly marked. Real browser blocked, S5/A08-DATA deferred, R5 awaits requirements. README/STATUS/HANDOFF/technical docs updated. No publication.
+
+## v4.9 — exact map integration
+- Main map defaults to exact v1 bounded enumeration. Safe 0/1/2+ selections, Top-K, replacements/greenfield, exclusions with reason and lineage, export editor/API/session JSON. Explicit approximate mode; no fallback on solver errors. Advanced v1 remains separate. Canonical route geometry checked against aggregate costs.
+- Five added tests (adapter, real HTTP, DOM/Leaflet event harness); 112/112 Node tests and 6 schemas / 30 instance checks. Demo on six synthetic candidates; original graph/core/JSON API unchanged. Actual browser E2E outstanding (environment policy), Windows/CI paused.
+- README/status/handoff/technical docs and plan updated; next PR scoped to shared/snowsite only.
+
+## v4.10 — map workspace UX
+- Owner requested presentation and ergonomics polish after exact map integration. Calculation/cancellation before results, sticky map at desktop widths, compact visible legend and vertical alternative list with comparable metrics; mobile stacking, keyboard focus preservation, explicit solver status. No frontend framework or new dependencies.
+- Confirmed shortcut opens the existing synthetic 2+2-of-6 fixture and runs exact Top-5; advanced exact JSON page uses same stylesheet and downloads received response, clears stale download on input/error. No change to mathematical core, data, JSON contracts or implicit legacy fallback.
+- 114/114 Node tests and six schemas/30 instance checks; expanded actual HTTP+DOM harness, static structure checks. Browser smoke updated, **not visually executed**, known environment block; Windows/CI paused. README/status/architecture/handoff updated; cumulative PR replaces v4.9-only patch.

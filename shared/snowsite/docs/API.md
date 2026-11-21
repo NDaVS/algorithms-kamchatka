@@ -2,7 +2,7 @@
 
 ## Quick start
 Canonical paths in v4.6: `apps/api/server.mjs`, `apps/cli/cli.mjs`, `packages/contracts/schemas/`, `workers/milp-python/`. Public imports `snowsite-kamchatka`, `snowsite-kamchatka/catalog`, `snowsite-kamchatka/network-file`, previous src entrypoints and HTTP schema/version are unchanged. Raw snapshot/evidence paths moved; see data/README.md.
-Node 22+ and Python 3.13 with `python -m pip install -r workers/milp-python/requirements.txt` (SciPy 1.17.0, NumPy 2.3.5). `SNOW_PYTHON` may point to the Python interpreter in your local virtual environment; default `python3` on Unix, `python` on Windows. No external service or network request during a solve. Legacy UI and `/api/compare` are Node-only and intentionally remain heuristic. `npm test` now includes exact tests and needs Python.
+Node 22+ and Python 3.13 with `python -m pip install -r workers/milp-python/requirements.txt` (SciPy 1.17.0, NumPy 2.3.5). `SNOW_PYTHON` may point to the Python interpreter in your local virtual environment; default `python3` on Unix, `python` on Windows. No external service or network request during a solve. The explicit legacy UI mode and `/api/compare` are Node-only and intentionally remain heuristic. The main map uses exact v1 by default since v4.9. `npm test` now includes exact tests and needs Python.
 
 ```sh
 node apps/cli/cli.mjs examples/demo-v1.json > result.json
@@ -114,3 +114,7 @@ A separate directory outside SnowSite installed the local `npm pack --offline --
 
 ## v4.8.1 — remaining local acceptance criteria
 No API/schema/solver change. `tests/v481-acceptance.test.mjs` proves the HTTP disconnect cancellation chain against a deliberately stalled child, 503 busy while in flight and reuse after abort; missing Python returns HTTP 500 `{error:"Optimization failed",code:"internal_error",path:""}`, CLI exit 1 typed JSON, no fake result. Health/legacy remain available and a later exact solve succeeds. Synthetic 1e6 m³ with Q=1 returns one allocation row, one million trips and 2,988-byte response; 1e6+1 rejected as 422 `resource_limit`. Linux GNU time recorded maximum RSS 123776 KiB on isolated compact request/rejection test; not simultaneous aggregate RSS or an enforced child memory cap. Existing 256 MiB V8 old-generation worker setting is not a full process-tree memory limit; remain localhost-only. See [actual results](benchmarks/v481/acceptance.md).
+
+v4.9 map adapter: `examples/v49/map-api-2plus2.json` uses the unchanged v1 contract; `examples/v49/map-editor-2plus2.json` is editor state, not an API request. Main map uses `bounded_enumeration`, safe preset and exploratory screening. `GET /lib/routing/engine.mjs` and `/lib/contracts/validate.mjs` are explicit browser-safe module assets, not new solver endpoints. Display routes from loaded/empty distances and graph; no API geometry contract change. Advanced v1 JSON stays on `/exact.html`. Local history export retains requests/results and explicit reasons; not a server persistence service.
+
+v4.10: GET `/demo-extended.json` serves exactly `examples/v49/map-editor-2plus2.json` (editor state, not a solver request). Main map still calls unchanged v1.0; exact HTML tool downloads the actual response, not a new API schema.

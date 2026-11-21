@@ -89,3 +89,9 @@ Accepted optional bounded enumeration with analytically admissible lexicographic
 
 ## ADR v4.8-R4: byte-stable release and scoped acceptance (accepted)
 Preserve tracked byte representation across Git checkout settings to keep immutable evidence and manifest valid. Fix local static server crash rather than rework transport. Common Python standard-library acceptance runner uses the active interpreter, separate named gates/logs and new output directory; CI stores output on success/failure. Report scope and unrun stages explicitly; Linux checkout with autocrlf=true is a portability regression test, not Windows proof. No public service, fake browser pass, new production package or changed contract.
+
+## ADR v4.9: exact map default (accepted)
+Owner requested UI/backend parity. Keep existing map layout; use safe exact v1 requests and compact results, canonical routing for geometry with distance verification. Explicit legacy mode only, advanced full v1 stays separate to prevent dropped constraints. No solver rewrite, production persistence or GIS extension. UI harness is not browser E2E.
+
+## v4.10 — presentation, not solver redesign (accepted)
+Use existing vanilla DOM/Leaflet and canonical API; earlier solve action and clearer alternative list are preferable to introducing another frontend framework. Confirm before replacing editor state with the existing synthetic 2+2 fixture; do not duplicate graph or data. Actual visual acceptance remains open.

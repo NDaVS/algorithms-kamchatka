@@ -50,3 +50,5 @@ Non-pruning reference: all 378 configurations solved via separate nested-pair en
 
 ### v4.8.1 resource acceptance (no mathematical change)
 One million m³ at Q=1 over one synthetic directed roundtrip of 2 km gives exactly one million trips and 2e12 mm, stored in one aggregate assignment. `tests/v481-acceptance.test.mjs` confirms actual compact HTTP output and rejection above the demand budget. This is an aggregate-model stress fixture, not plausible operational snow volume or a new performance SLA. Prior city and seed719 proofs unchanged.
+
+v4.9 map integration: mathematical model, core defaults and proof invariants unchanged. The editor explicitly selects bounded_enumeration and displays actual solver/search status. Reconstructed paths use canonical routing on the same snapshot/closures and must match aggregate loaded/empty distances in integer mm; route display failure cannot replace a validated exact result with legacy. Advanced profiles/intra-site evidence use full JSON v1.

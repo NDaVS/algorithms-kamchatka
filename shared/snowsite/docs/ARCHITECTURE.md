@@ -1,6 +1,6 @@
-# SnowSite — implemented repository architecture (v4.8.1; migration completed v4.6)
+# SnowSite — implemented repository architecture (v4.10; migration completed v4.6)
 
-R0–R4 directory migration is implemented in the working repository, not a proposed layout. SnowSite is a local modular monolith: Node.js applications and independent packages, local Python solver subprocess. No dependency on «Север», no remote publication or production database. The directory migration preserved v4.5 behavior; v4.7 added opt-in bounded enumeration. v4.8.1 retains that model, default strategy and API v1.0.
+R0–R4 directory migration is implemented in the working repository, not a proposed layout. SnowSite is a local modular monolith: Node.js applications and independent packages, local Python solver subprocess. No dependency on «Север», no remote publication or production database. The directory migration preserved v4.5 behavior; v4.7 added opt-in bounded enumeration. v4.9 retains that model, API v1.0 and module default strategy; the primary map explicitly uses bounded_enumeration.
 
 ```mermaid
 flowchart TD
@@ -123,3 +123,7 @@ API static files are type-checked and read before writing headers; a missing fil
 
 ### v4.8.1 scoped acceptance and frozen plan
 No dependency/tree/runtime/solver changes. Remaining local B07/B09/B21 exercised through existing HTTP/CLI/worker boundaries; subprocess abort/recovery, missing interpreter and compact assignment verified in [v4.8.1 acceptance](benchmarks/v481/acceptance.md). Node old-generation guard is not a complete native/process-tree RSS cap; R5 requires deployment requirements before adding resource isolation. Active plan consolidated at [07_IMPLEMENTATION_PLAN](07_IMPLEMENTATION_PLAN.md); owner paused Windows and GitHub Actions, neither claimed passed. Existing browser policy block and data research deferral remain. No additional architectural scope.
+
+v4.9 UI flow: map editor → exact-map adapter → HTTP v1 → worker → checker → compact result → canonical browser routing (distance parity check) → map. Legacy is explicit mode, not dependency/fallback for exact. Advanced v1 JSON is separate. Two allowlisted browser module paths preserve a single routing implementation; no arbitrary file exposure. No package boundary or solver change.
+
+v4.10: same modular architecture and exact-map flow; presentation-only layout and event improvements, allowlisted `/demo-extended.json` uses existing synthetic fixture, advanced JSON download is client-side. No solver/package boundaries or contracts changed.

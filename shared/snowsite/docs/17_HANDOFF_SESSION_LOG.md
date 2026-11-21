@@ -161,3 +161,9 @@ Restored v4.7.1 bundle; original `GET /vendor/` on local API terminated Node wit
 
 ## v4.8.1 / residual B07/B09/B21, existing-plan closure
 Base dd1b56a; prior bundle restored, 328 manifest entries and 104 tests PASS. Verified actual HTTP cancellation and child exit with stalled POSIX subprocess fixture; busy 503 and subsequent exact reuse. Missing Python → typed HTTP 500, CLI 1; health and legacy intact; exact recovery. Synthetic million-trip solution compact (1 row / 2988 bytes), excess rejected. GNU time max RSS 123776 KiB, no OS native limit claim. 107/107 final tests, graph PASS, six schemas and 26 checks PASS. No runtime changes, no research, no new tasks. Updated active 07/08 plans and README/STATUS/HANDOFF; Windows/CI explicitly paused by owner, browser blocked, A08-DATA/S5 deferred, R5 waits for actual requirements. Next action owner review of remaining gates only. See benchmarks/v481.
+
+## v4.9 / exact map integration
+Owner explicitly reopened UI parity after v4.8.1. Implemented adapter, exact default, Top-K, relocation/greenfield, exclusion lineage, session/result export, verified route reconstruction, explicit legacy, advanced JSON separation. Focused tests and full Linux test gate 112/112, 6 schemas / 30 checks. City graph, core solver, underlying contract unchanged. DOM events verified with real HTTP but mocked DOM/Leaflet; actual browser gate not passed. Previous PR merged per owner; scoped delta for next PR, no remote mutation. See benchmarks/v49.
+
+## v4.10 — owner-requested workspace UX
+Base 7a690a5; retained exact map and legacy compatibility. Added early solve/cancel, responsive workspace, clearer alternatives/focus, confirmed existing demo shortcut, JSON response download. 114/114, graph and 30 instance checks PASS locally; no actual Chromium verification. Integration patch cumulative from merged v4.8.1, only shared/snowsite; four omitted historical logs restored. No research/CI/Windows/solver/data work.

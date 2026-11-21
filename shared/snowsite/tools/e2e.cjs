@@ -1,10 +1,10 @@
-// Optional browser checks (needs Playwright): node tools/e2e.cjs [url]
+// Historical legacy regression (explicit legacy mode; needs Playwright): node tools/e2e.cjs [url]
 const {chromium}=require('playwright');
 const URL=process.argv[2]||'http://127.0.0.1:8793';
 const ok=(c,m)=>{console.log((c?'PASS ':'FAIL ')+m);if(!c)process.exitCode=1;};
 (async()=>{const b=await chromium.launch();const p=await b.newPage({viewport:{width:1366,height:768}});
 const errs=[];p.on('pageerror',e=>errs.push(String(e)));p.on('console',m=>m.type()==='error'&&errs.push(m.text()));
-await p.goto(URL);await p.waitForSelector('#variants button',{timeout:15000});await p.waitForTimeout(1500);
+await p.goto(URL);await p.waitForFunction(()=>document.getElementById('task').textContent.includes('Сравниваем'));await p.selectOption('#calc-mode','legacy');await p.click('#compare');await p.waitForSelector('#variants button',{timeout:20000});await p.waitForTimeout(1500);
 // first screen
 const mapBox=await p.locator('#map').boundingBox(),resBox=await p.locator('.result').boundingBox();
 ok(mapBox.y+mapBox.height<=768+2&&resBox.y+Math.min(resBox.height,200)<=768,'1366x768: map and result visible together without page scroll');
@@ -44,13 +44,13 @@ for(const [dx,dy] of [[0.45,0.45],[0.5,0.48],[0.55,0.5]]){await p.click('#edit-b
 await p.click('#edit-btn');await p.click('#tab-points');
 await p.locator('.entry').filter({hasText:'Источник снега'}).nth(1).locator('button[title="Удалить точку"]').click();
 await p.click('#new-demand');box=await p.locator('#map').boundingBox();await p.mouse.click(box.x+box.width*0.48,box.y+box.height*0.52);await p.waitForTimeout(200);
-await p.click('#compare');await p.waitForTimeout(1500);ok((await p.textContent('#stats-status'))==='Готово','BUG-02 compare OK after add/delete/add');
+await p.click('#compare');await p.waitForTimeout(1500);ok((await p.textContent('#stats-status'))==='Готово (legacy)','BUG-02 compare OK after add/delete/add');
 // BUG-03
 let n=0;await p.route('**/api/compare',async r=>{n++;if(n===1)await new Promise(x=>setTimeout(x,1500));await r.continue();});
 await p.click('#compare');await p.waitForTimeout(200);
 await p.click('#edit-btn');await p.click('#tab-points');const cap=p.locator('.entry input[type=number]').last();await cap.fill('1');await cap.press('Tab');
 ok((await p.textContent('#stats-status')).includes('Изменено'),'BUG-03 status "Изменено" while request in flight');
-await p.click('#drawer-close');await p.click('#compare');await p.waitForTimeout(3000);ok((await p.textContent('#stats-status'))==='Готово','BUG-03 second result applied');
+await p.click('#drawer-close');await p.click('#compare');await p.waitForTimeout(3000);ok((await p.textContent('#stats-status'))==='Готово (legacy)','BUG-03 second result applied');
 await p.unroute('**/api/compare');
 // BUG-04 reset/import
 await p.click('#edit-btn');await p.click('#tab-file');await p.click('#reset');ok((await p.textContent('#reset')).includes('Точно'),'BUG-04 reset asks confirmation');
@@ -58,7 +58,7 @@ await p.setInputFiles('#import',{name:'x.json',mimeType:'application/json',buffe
 ok((await p.textContent('#import-err')).includes('другой версии'),'BUG-04 import with other network version rejected');
 await p.keyboard.press('Escape');ok(!(await p.locator('#drawer').isVisible()),'Escape closes drawer');
 // deficit scenario
-await p.click('#edit-btn');await p.click('#tab-file');await p.click('#reset');await p.click('#reset');await p.waitForTimeout(500);
+await p.click('#edit-btn');await p.click('#tab-file');await p.click('#reset');await p.click('#reset');await p.waitForTimeout(500);await p.click('#drawer-close');await p.selectOption('#calc-mode','legacy');await p.click('#edit-btn');
 await p.click('#tab-points');const caps=p.locator('.entry input[type=number]');
 for(const i of [5,6]){await caps.nth(i).fill('20');await caps.nth(i).press('Tab');}
 await p.click('#drawer-close');await p.click('#compare');await p.waitForTimeout(1500);

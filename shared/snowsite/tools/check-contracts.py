@@ -63,7 +63,8 @@ reject('site-record-v1.schema.json', invalid, 'negative capacity')
 env = {**os.environ, 'SNOW_PYTHON': os.environ.get('SNOW_PYTHON', sys.executable)}
 for fixture, flags, strategies in [
     ('examples/demo-v1.json', [], [None, 'bounded_enumeration']),
-    ('examples/v43/add-2-plus-2.json', ['--network','examples/v43/network.json','--network-id','synthetic-v43'], ['unified_milp','bounded_enumeration'])
+    ('examples/v43/add-2-plus-2.json', ['--network','examples/v43/network.json','--network-id','synthetic-v43'], ['unified_milp','bounded_enumeration']),
+    ('examples/v49/map-api-2plus2.json', [], ['bounded_enumeration'])
 ]:
     for strategy in strategies:
         r = load(fixture)
